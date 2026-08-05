@@ -54,6 +54,18 @@ _MIRRORED_LABEL = {"right": "left", "left": "right"}
 #        2=MediaPipe 伪3D (原 z)
 _SOURCE_NAMES = {0: "HAMER 3D", 1: "WORLD 3D", 2: "MP PSEUDO-3D"}
 
+# 帧级质量门控: 平均关键点可见度低于此阈值 → 坏帧, 保持上一帧好角度 (不外推重建)
+_MIN_VIS = 0.55
+
+
+def _frame_quality(hand) -> float:
+    """0-1 平均关键点可见度; 无 visibility 字段时视为好帧 (1.0)."""
+    try:
+        vis = [lm.visibility for lm in hand.landmarks]
+        return float(np.mean(vis)) if vis else 1.0
+    except (AttributeError, TypeError):
+        return 1.0
+
 
 def _select_hand(results, hand: str):
     """Select the tracked hand. `hand` is the USER's physical hand ("right" /
@@ -212,8 +224,10 @@ def main():
     show_diag = False
     source_mode = 0              # 0=hamer, 1=MediaPipe world-3D, 2=伪3D (M 循环)
     last_hres = None
+    last_good = None            # (angles, bent, scores, source) 坏帧保持
     smoothed_kp = None          # last OneEuro-smoothed kp3d (angles + calibration source)
     kp_smoother = OneEuroFilter(n_joints=63, min_cutoff=0.8, beta=0.005)
+    world_smoother = OneEuroFilter(n_joints=63, min_cutoff=1.5, beta=0.004)
     bbox_ema = None             # (cx, cy, size) EMA → stable hamer crop across frames
     prev_time = time.monotonic()
     fps = 0.0
@@ -245,8 +259,10 @@ def main():
                 if hand is None:
                     # no hand matching the configured handedness → no-hand branch
                     last_hres = None
+                    last_good = None
                     smoothed_kp = None
                     bbox_ema = None
+                    world_smoother.reset()
                     if frame_count % 30 == 0:
                         print(f"  (no {args.hand} hand detected)")
                     if leap is not None:
@@ -254,6 +270,7 @@ def main():
                 else:
                     mp_pts = tracker.landmark_xy(hand, (h, w))
                     frame = tracker.draw_landmarks(frame, [hand])
+                    quality = _frame_quality(hand)
 
                     # Gate hamer on the configured hand: the right-MANO model must
                     # never see a left-hand crop (silently mirrored/wrong angles).
@@ -261,8 +278,9 @@ def main():
                     run_hamer = (args.hand == "first"
                                  or hand.handedness.lower() == _MIRRORED_LABEL.get(args.hand, args.hand))
 
+                    # 坏帧 (低可见度) 不喂 hamer, 避免把劣质裁剪写进 last_hres
                     hres = None
-                    if run_hamer and h3d.available and source_mode == 0:
+                    if run_hamer and h3d.available and source_mode == 0 and quality >= _MIN_VIS:
                         if frame_count % (args.skip + 1) == 0:
                             bbox = hand_bbox_from_landmarks(mp_pts, (h, w))
                             if bbox is not None:
@@ -285,29 +303,35 @@ def main():
                                     last_hres = new_hres
                         hres = last_hres
 
-                    if source_mode == 0 and hres is not None:
-                        pts = smoothed_kp = kp_smoother(hres.kp3d.reshape(-1)).reshape(21, 3)
-                        angles = calibrator.map_points(pts)
-                        bent, scores = finger_id.identify_points(pts)
-                        if show_diag:
-                            frame = _draw_hamer_overlay(frame, h3d, hres, mp_pts, pts3d=pts)
-                        source = _SOURCE_NAMES[0]
-                    elif source_mode == 1 and hand.world_landmarks is not None:
-                        # MediaPipe 规范 3D 手模型 (米制, 相机帧率, 无需 hamer 推理)
-                        pts = smoothed_kp = np.array(
-                            [[lm.x, lm.y, lm.z] for lm in hand.world_landmarks],
-                            dtype=np.float64)
-                        angles = calibrator.map_points(pts)
-                        bent, scores = finger_id.identify_points(pts)
-                        source = _SOURCE_NAMES[1]
+                    if quality < _MIN_VIS and last_good is not None:
+                        # 坏帧: 保持上一帧好角度, 不外推重建 (绿色关键点仍显示)
+                        angles, bent, scores, source = last_good
                     else:
-                        # pseudo-3D 源: 角度来自 MediaPipe 伪 z, 校准用 HandResult 路径
-                        smoothed_kp = None
-                        angles = calibrator.map(hand, (h, w))
-                        bent, scores = finger_id.identify(hand, (h, w))
-                        source = _SOURCE_NAMES[2]
+                        if source_mode == 0 and hres is not None:
+                            pts = smoothed_kp = kp_smoother(hres.kp3d.reshape(-1)).reshape(21, 3)
+                            angles = calibrator.map_points(pts)
+                            bent, scores = finger_id.identify_points(pts)
+                            if show_diag:
+                                frame = _draw_hamer_overlay(frame, h3d, hres, mp_pts, pts3d=pts)
+                            source = _SOURCE_NAMES[0]
+                        elif source_mode == 1 and hand.world_landmarks is not None:
+                            # MediaPipe 规范 3D 手模型 (米制, 相机帧率, 无需 hamer 推理)
+                            wpts = np.array(
+                                [[lm.x, lm.y, lm.z] for lm in hand.world_landmarks],
+                                dtype=np.float64)
+                            pts = smoothed_kp = world_smoother(wpts.reshape(-1)).reshape(21, 3)
+                            angles = calibrator.map_points(pts)
+                            bent, scores = finger_id.identify_points(pts)
+                            source = _SOURCE_NAMES[1]
+                        else:
+                            # pseudo-3D 源: 角度来自 MediaPipe 伪 z, 校准用 HandResult 路径
+                            smoothed_kp = None
+                            angles = calibrator.map(hand, (h, w))
+                            bent, scores = finger_id.identify(hand, (h, w))
+                            source = _SOURCE_NAMES[2]
 
-                    angles = angle_filter(angles)
+                        angles = angle_filter(angles)
+                        last_good = (angles, bent, scores, source)
 
                     if leap is not None:
                         from main import OPEN_POSE
@@ -322,8 +346,10 @@ def main():
                         print_angles_table(angles, bent, scores)
             else:
                 last_hres = None
+                last_good = None
                 smoothed_kp = None
                 bbox_ema = None
+                world_smoother.reset()
                 if frame_count % 30 == 0:
                     print("  (no hand detected)")
                 if leap is not None:
@@ -347,6 +373,7 @@ def main():
                             baseline = calibrator.calibrate(hand, (h, w))
                         angle_filter.reset()
                         kp_smoother.reset()
+                        world_smoother.reset()
                         print(f"\n  *** CALIBRATED! baseline max: {baseline.max():.3f} rad ***\n")
                 elif key == ord("d"):
                     show_diag = not show_diag
