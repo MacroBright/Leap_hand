@@ -43,12 +43,22 @@ _KP_CONN = [
     (0, 17), (17, 18), (18, 19), (19, 20),
 ]
 
+# The frame is mirrored (cv2.flip(frame, 1)) before detection, so MediaPipe's
+# handedness label is the OPPOSITE of the user's physical hand: a physical right
+# hand appears as MediaPipe "Left". --hand refers to the USER's physical hand;
+# translate it to the mirrored label here.
+_MIRRORED_LABEL = {"right": "left", "left": "right"}
+
 
 def _select_hand(results, hand: str):
+    """Select the tracked hand. `hand` is the USER's physical hand ("right" /
+    "left"); due to the mirror flip it is matched against the opposite MediaPipe
+    label. "first" tracks the first detected hand (no handedness gate)."""
     if hand == "first":
         return results[0]
+    target = _MIRRORED_LABEL.get(hand, hand)
     for r in results:
-        if r.handedness.lower() == hand:
+        if r.handedness.lower() == target:
             return r
     return None
 
@@ -112,10 +122,11 @@ def main():
                         help="run hamer every (skip+1) frames (0 = every frame)")
     parser.add_argument("--hand", type=str, default="right",
                         choices=["first", "right", "left"],
-                        help="which MediaPipe hand to track. The frame is mirrored "
-                             "(cv2.flip), so handedness labels are relative to the "
-                             "mirrored image — if the robot tracks the wrong hand, "
-                             "try --hand left")
+                        help="which PHYSICAL hand to track (default 'right' = your "
+                             "right hand, for the LEAP right hand). The frame is "
+                             "mirrored (cv2.flip), so a physical right hand is "
+                             "MediaPipe 'Left' — this flag handles the inversion. "
+                             "'first' = first detected hand, no gate")
     parser.add_argument("--img", type=str, default=None,
                         help="run on a single image and exit")
     args = parser.parse_args()
@@ -221,7 +232,7 @@ def main():
                     # never see a left-hand crop (silently mirrored/wrong angles).
                     # "first" is a legacy escape hatch that skips the handedness gate.
                     run_hamer = (args.hand == "first"
-                                 or hand.handedness.lower() == args.hand)
+                                 or hand.handedness.lower() == _MIRRORED_LABEL.get(args.hand, args.hand))
 
                     hres = None
                     if run_hamer and h3d.available and hamer_on:
