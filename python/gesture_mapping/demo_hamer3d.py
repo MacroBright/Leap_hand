@@ -49,6 +49,11 @@ _KP_CONN = [
 # translate it to the mirrored label here.
 _MIRRORED_LABEL = {"right": "left", "left": "right"}
 
+# 3D 源: 0=hamer (真3D MANO, 逐帧重建, 慢但真3D)
+#        1=MediaPipe world landmarks (规范3D 手模型, 米制, 相机帧率, 稳)
+#        2=MediaPipe 伪3D (原 z)
+_SOURCE_NAMES = {0: "HAMER 3D", 1: "WORLD 3D", 2: "MP PSEUDO-3D"}
+
 
 def _select_hand(results, hand: str):
     """Select the tracked hand. `hand` is the USER's physical hand ("right" /
@@ -205,7 +210,7 @@ def main():
 
     frame_count = 0
     show_diag = False
-    hamer_on = True
+    source_mode = 0              # 0=hamer, 1=MediaPipe world-3D, 2=伪3D (M 循环)
     last_hres = None
     smoothed_kp = None          # last OneEuro-smoothed kp3d (angles + calibration source)
     kp_smoother = OneEuroFilter(n_joints=63, min_cutoff=0.8, beta=0.005)
@@ -231,7 +236,11 @@ def main():
             results = tracker.detect(frame)
 
             if results:
-                hand = _select_hand(results, args.hand)
+                # hamer 需右-MANO 门控; world/pseudo 无此风险 → 无匹配时退回首只检测到手
+                if source_mode == 0:
+                    hand = _select_hand(results, args.hand)
+                else:
+                    hand = _select_hand(results, args.hand) or results[0]
                 hres = None
                 if hand is None:
                     # no hand matching the configured handedness → no-hand branch
@@ -253,7 +262,7 @@ def main():
                                  or hand.handedness.lower() == _MIRRORED_LABEL.get(args.hand, args.hand))
 
                     hres = None
-                    if run_hamer and h3d.available and hamer_on:
+                    if run_hamer and h3d.available and source_mode == 0:
                         if frame_count % (args.skip + 1) == 0:
                             bbox = hand_bbox_from_landmarks(mp_pts, (h, w))
                             if bbox is not None:
@@ -276,17 +285,25 @@ def main():
                                     last_hres = new_hres
                         hres = last_hres
 
-                    if hres is not None:
+                    if source_mode == 0 and hres is not None:
                         pts = smoothed_kp = kp_smoother(hres.kp3d.reshape(-1)).reshape(21, 3)
                         angles = calibrator.map_points(pts)
                         bent, scores = finger_id.identify_points(pts)
                         if show_diag:
                             frame = _draw_hamer_overlay(frame, h3d, hres, mp_pts, pts3d=pts)
-                        source = "HAMER 3D"
+                        source = _SOURCE_NAMES[0]
+                    elif source_mode == 1 and hand.world_landmarks is not None:
+                        # MediaPipe 规范 3D 手模型 (米制, 相机帧率, 无需 hamer 推理)
+                        pts = smoothed_kp = np.array(
+                            [[lm.x, lm.y, lm.z] for lm in hand.world_landmarks],
+                            dtype=np.float64)
+                        angles = calibrator.map_points(pts)
+                        bent, scores = finger_id.identify_points(pts)
+                        source = _SOURCE_NAMES[1]
                     else:
                         angles = calibrator.map(hand, (h, w))
                         bent, scores = finger_id.identify(hand, (h, w))
-                        source = "MP FALLBACK"
+                        source = _SOURCE_NAMES[2]
 
                     angles = angle_filter(angles)
 
@@ -332,8 +349,8 @@ def main():
                     show_diag = not show_diag
                     print(f"\n  Diagnostic overlay: {'ON' if show_diag else 'OFF'}\n")
                 elif key == ord("m"):
-                    hamer_on = not hamer_on
-                    print(f"\n  3D source: {'hamer' if hamer_on else 'MediaPipe pseudo-3D'}\n")
+                    source_mode = (source_mode + 1) % 3
+                    print(f"\n  3D source: {_SOURCE_NAMES[source_mode]}\n")
                 elif key == 9:  # Tab — cycle joint 0-15 for gain tuning
                     cur_joint = (cur_joint + 1) % 16
                     _, f, j, _ = _MOTOR_DIAG[cur_joint]
