@@ -42,6 +42,10 @@ class Calibrator:
         self.mapper = mapper
         self._baseline: Optional[np.ndarray] = None
         self._calibrated = False
+        # 3D point-cloud (hamer) baseline kept in its OWN slots so it can never
+        # be mixed with the HandResult baseline (different 3D sources/scales).
+        self._baseline_points: Optional[np.ndarray] = None
+        self._calibrated_points = False
 
     def calibrate(
         self,
@@ -58,15 +62,15 @@ class Calibrator:
 
     def calibrate_points(self, pts: np.ndarray) -> np.ndarray:
         """Record current 3D point cloud as the zero reference (call with hand fully open)."""
-        self._baseline = self.mapper.map_points_to_leap(pts)
-        self._calibrated = True
-        return self._baseline
+        self._baseline_points = self.mapper.map_points_to_leap(pts)
+        self._calibrated_points = True
+        return self._baseline_points
 
     def map_points(self, pts: np.ndarray) -> np.ndarray:
         """Zero-corrected joint angles from a (21,3) point cloud (hamer path)."""
         raw = self.mapper.map_points_to_leap(pts)
-        if self._calibrated and self._baseline is not None:
-            return np.clip(raw - self._baseline, -0.3, 2.8)
+        if self._calibrated_points and self._baseline_points is not None:
+            return np.clip(raw - self._baseline_points, -0.3, 2.8)
         return raw
 
     def map(
@@ -101,7 +105,7 @@ class Calibrator:
 
     @property
     def is_calibrated(self) -> bool:
-        return self._calibrated
+        return self._calibrated or self._calibrated_points
 
 
 class FingerIdentifier:
