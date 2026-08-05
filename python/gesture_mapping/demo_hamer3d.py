@@ -32,7 +32,6 @@ from gesture_mapping.demo_realtime import (
     _OpenCVCamera, find_best_camera, draw_hud, print_motor_mapping,
     print_angles_table,
 )
-import leap_hand_utils.leap_hand_utils as lhu
 
 
 # MANO skeleton connectivity (MediaPipe-index) for the 3D overlay
@@ -250,7 +249,7 @@ def main():
 
                     if leap is not None:
                         from main import OPEN_POSE
-                        leap.set_leap(lhu.angle_safety_clip(OPEN_POSE + JOINT_DIR * angles))
+                        leap.set_leap(OPEN_POSE + JOINT_DIR * angles)
 
                     draw_hud(frame, angles, calibrator, bent, scores, show_diag)
                     cv2.putText(frame, f"3D: {source}", (10, h - 10),
