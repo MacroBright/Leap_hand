@@ -1,5 +1,7 @@
 test_env
 .vscode
+# 改动前备份 (python/backups/)
+python/backups/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -152,3 +154,14 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# CoAgent orchestrator state
+.orchestrator/
+
+# 离线测试图像 (seeded hamer example_data + generated _compare overlays, 不入库)
+python/images/
+# MediaPipe 模型权重 (7.8MB, 可重新下载, 不入库)
+python/gesture_mapping/models/
+# 运行时产物 (自动生成)
+python/gesture_mapping/camera_pref.json
+python/gesture_mapping/joint_gain.json
