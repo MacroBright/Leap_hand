@@ -4,6 +4,8 @@ test_env
 python/backups/
 # 迁移备份: 退役 venv / 依赖快照 (勿提交, 勿删)
 backups/
+# 第三方参考副本 (154MB: LEAP_Hand_V2_Adv_API / dex-hand-teleop / LEAP_Hand_API, 不入库)
+docs/reference/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
