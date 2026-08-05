@@ -128,7 +128,7 @@ Camera → HandTracker.detect()
 ## 操作方式
 
 ```bash
-cd ~/office/Leap_Hand/python && ../venv/bin/python gesture_mapping/demo_realtime.py --drive
+cd ~/office/Leap_Hand/python && conda activate leap_hand && python gesture_mapping/demo_realtime.py --drive
 ```
 
 | 按键 | 功能 |

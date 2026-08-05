@@ -2,6 +2,8 @@ test_env
 .vscode
 # 改动前备份 (python/backups/)
 python/backups/
+# 迁移备份: 退役 venv / 依赖快照 (勿提交, 勿删)
+backups/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
