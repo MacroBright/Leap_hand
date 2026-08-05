@@ -87,7 +87,7 @@ MediaPipe 的 z 是**伪深度**（由 2D 模型回归, 单位无量纲, 相对�
 Camera (RealSense/OpenCV)
   → HandTracker.detect()                    [MediaPipe 始终跑: 给 bbox + 回退源]
   → hand_bbox_from_landmarks()              [方形裁剪 + margin, 全帧坐标]
-  → crop → HaMeR3D.regress(crop)            [hamer fp16+autocast, 单手 batch=1]
+  → HaMeR3D.regress(frame, bbox)            [hamer fp16+autocast, 单手 batch=1; 裁剪由 ViTDetDataset 内部完成]
         → kp3d (21,3) 米制 [顺序 1:1 MediaPipe]
         + verts (778,3)  + cam_t (弱透视)
   → JointMapper.map_points_to_leap(kp3d)    [新增核心, 复用 _palm_frame/flexion/fan/gain/clip]
@@ -107,7 +107,8 @@ class HaMeR3D:
         # 惰性 import hamer; 加载 fp16 (复用 smoke_test load_hamer_half); 失败→available=False
         pass
 
-    def regress(self, crop_bgr: np.ndarray) -> "HaMeR3DResult" | None:
+    def regress(self, frame_bgr: np.ndarray, bbox_xyxy: tuple) -> "HaMeR3DResult" | None:
+        # 裁剪/缩放由 hamer 的 ViTDetDataset 内部完成 (镜像 smoke_test 路径); bbox_xyxy 为全帧像素坐标
         # 单手 batch=1; torch.no_grad + autocast(fp16); 校验 kp3d finite
         # 返回 result 或 None(失败)
 
