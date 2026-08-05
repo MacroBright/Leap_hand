@@ -165,3 +165,5 @@ python/gesture_mapping/models/
 # 运行时产物 (自动生成)
 python/gesture_mapping/camera_pref.json
 python/gesture_mapping/joint_gain.json
+# 实测电机限位表 (机器/硬件相关, 不入库)
+python/gesture_mapping/motor_limits.json

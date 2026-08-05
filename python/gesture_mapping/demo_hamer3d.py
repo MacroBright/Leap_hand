@@ -169,6 +169,18 @@ def main():
     else:
         mapper.joint_gain = np.ones(16)
 
+    # 实测电机限位表 (Task D): 若存在, --drive 写入前裁剪到机械范围.
+    # 格式: {"min": [16], "max": [16]} (rad, 伺服真实位置). 无表 → 不裁剪 (兼容旧行为).
+    motor_limits = None
+    limits_path = Path(__file__).resolve().parent / "motor_limits.json"
+    if limits_path.exists():
+        import json
+        with open(limits_path) as f:
+            _lim = json.load(f)
+        motor_limits = (np.array(_lim["min"], dtype=np.float64),
+                        np.array(_lim["max"], dtype=np.float64))
+        print(f"[INFO] Motor limits loaded: {limits_path}")
+
     JOINT_DIR = np.array([-1, -1, -1, -1, -1, -1, -1, -1,
                           -1, -1, -1, -1,  1, -1, -1, -1])
 
@@ -335,7 +347,10 @@ def main():
 
                     if leap is not None:
                         from main import OPEN_POSE
-                        leap.set_leap(OPEN_POSE + JOINT_DIR * angles)
+                        pose = OPEN_POSE + JOINT_DIR * angles
+                        if motor_limits is not None:
+                            pose = np.clip(pose, motor_limits[0], motor_limits[1])
+                        leap.set_leap(pose)
 
                     draw_hud(frame, angles, calibrator, bent, scores, show_diag)
                     cv2.putText(frame, f"3D: {source}   {fps:4.0f} fps",
