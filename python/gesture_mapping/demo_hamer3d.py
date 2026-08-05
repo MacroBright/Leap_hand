@@ -187,6 +187,7 @@ def main():
     frame_count = 0
     show_diag = False
     hamer_on = True
+    last_hres = None
 
     try:
         while True:
@@ -205,10 +206,14 @@ def main():
                 frame = tracker.draw_landmarks(frame, [hand])
 
                 hres = None
-                if h3d.available and hamer_on and frame_count % (args.skip + 1) == 0:
-                    bbox = hand_bbox_from_landmarks(mp_pts, (h, w))
-                    if bbox is not None:
-                        hres = h3d.regress(frame, bbox)
+                if h3d.available and hamer_on:
+                    if frame_count % (args.skip + 1) == 0:
+                        bbox = hand_bbox_from_landmarks(mp_pts, (h, w))
+                        if bbox is not None:
+                            new_hres = h3d.regress(frame, bbox)
+                            if new_hres is not None:
+                                last_hres = new_hres
+                    hres = last_hres
 
                 if hres is not None:
                     pts = hres.kp3d
@@ -236,6 +241,7 @@ def main():
                 if frame_count % 20 == 0:
                     print_angles_table(angles, bent, scores)
             else:
+                last_hres = None
                 if frame_count % 30 == 0:
                     print("  (no hand detected)")
                 if leap is not None:
