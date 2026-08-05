@@ -10,6 +10,7 @@ Workstream: W1 手势映射 — .claude/workstreams/01-gesture-mapping.md
 """
 
 import cv2
+import time
 import numpy as np
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -97,7 +98,7 @@ class HandTracker:
 
         options = HandLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=model),
-            running_mode=RunningMode.IMAGE,
+            running_mode=RunningMode.VIDEO,
             num_hands=max_num_hands,
             min_hand_detection_confidence=min_detection_confidence,
             min_hand_presence_confidence=min_presence_confidence,
@@ -108,7 +109,7 @@ class HandTracker:
     # ─── Public API ───────────────────────────────────────────────
 
     def detect(self, image: np.ndarray) -> List["HandResult"]:
-        """Run hand detection on a BGR image.
+        """Run hand tracking on a BGR image (VIDEO mode: temporal prior).
 
         Args:
             image: BGR (H, W, 3) uint8 numpy array.
@@ -118,7 +119,8 @@ class HandTracker:
         """
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         mp_image = MpImage(image_format=ImageFormat.SRGB, data=rgb)
-        mp_result = self._landmarker.detect(mp_image)
+        ts = int(time.monotonic() * 1000)  # monotonic ms → VIDEO mode prior
+        mp_result = self._landmarker.detect_for_video(mp_image, ts)
 
         return self._parse_result(mp_result)
 
@@ -126,7 +128,8 @@ class HandTracker:
         """Return raw HandLandmarkerResult (for advanced use)."""
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         mp_image = MpImage(image_format=ImageFormat.SRGB, data=rgb)
-        return self._landmarker.detect(mp_image)
+        ts = int(time.monotonic() * 1000)
+        return self._landmarker.detect_for_video(mp_image, ts)
 
     def draw_landmarks(
         self,
