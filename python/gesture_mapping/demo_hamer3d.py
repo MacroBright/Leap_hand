@@ -29,8 +29,8 @@ from gesture_mapping.filter import OneEuroFilter
 from gesture_mapping.camera import open_realsense
 from gesture_mapping.hamer_3d import HaMeR3D, hand_bbox_from_landmarks
 from gesture_mapping.demo_realtime import (
-    _OpenCVCamera, find_best_camera, draw_hud, print_motor_mapping,
-    print_angles_table,
+    _OpenCVCamera, _MOTOR_DIAG, find_best_camera, draw_hud,
+    print_motor_mapping, print_angles_table,
 )
 
 
@@ -63,9 +63,9 @@ def _select_hand(results, hand: str):
     return None
 
 
-def _draw_hamer_overlay(frame, h3d, hres, mp_pts):
+def _draw_hamer_overlay(frame, h3d, hres, mp_pts, pts3d=None):
     """Draw projected MANO kp skeleton (yellow) + MediaPipe kp (green) for diagnosis."""
-    kp2d = h3d.project_to_frame(hres, hres.kp3d)
+    kp2d = h3d.project_to_frame(hres, hres.kp3d if pts3d is None else pts3d)
     for a, b in _KP_CONN:
         cv2.line(frame,
                  (int(round(kp2d[a][0])), int(round(kp2d[a][1]))),
@@ -118,8 +118,9 @@ def main():
                         help="Camera index (default: auto-detect)")
     parser.add_argument("--drive", action="store_true", help="Drive LEAP Hand hardware")
     parser.add_argument("--no-display", action="store_true")
-    parser.add_argument("--skip", type=int, default=0,
-                        help="run hamer every (skip+1) frames (0 = every frame)")
+    parser.add_argument("--skip", type=int, default=1,
+                        help="run hamer every (skip+1) frames (1 = every 2nd; "
+                             "keeps MediaPipe at camera rate for smooth keypoints)")
     parser.add_argument("--hand", type=str, default="right",
                         choices=["first", "right", "left"],
                         help="which PHYSICAL hand to track (default 'right' = your "
@@ -143,9 +144,13 @@ def main():
     finger_id = FingerIdentifier(mapper, bend_threshold=0.20)
     angle_filter = OneEuroFilter(n_joints=16, min_cutoff=1.0, beta=0.007)
 
-    gain_path = Path(__file__).resolve().parent / "joint_gain.json"
+    # hamer 的 3D 弯曲角本身已准确, 不再需要 MediaPipe 伪 3D 的 1.5× 放大。
+    # 用独立增益文件, 默认恒等 (1.0), 供实时调参后保存 (与 demo_realtime 互不影响)。
+    gain_path = Path(__file__).resolve().parent / "joint_gain_3d.json"
     if gain_path.exists():
         mapper.load_gain_from(str(gain_path))
+    else:
+        mapper.joint_gain = np.ones(16)
 
     JOINT_DIR = np.array([-1, -1, -1, -1, -1, -1, -1, -1,
                           -1, -1, -1, -1,  1, -1, -1, -1])
@@ -188,7 +193,7 @@ def main():
 
     print("\n" + "=" * 50)
     print("  LEAP Hand — hamer 3D Gesture Mapper")
-    print("  SPACE=calib | D=diag | M=source | S=save | Q=quit")
+    print("  SPACE=calib | D=diag | M=source | TAB=gain | [ ]=± | R=reset | S=save | Q=quit")
     print("=" * 50)
     print_motor_mapping()
 
@@ -202,6 +207,12 @@ def main():
     show_diag = False
     hamer_on = True
     last_hres = None
+    smoothed_kp = None          # last OneEuro-smoothed kp3d (angles + calibration source)
+    kp_smoother = OneEuroFilter(n_joints=63, min_cutoff=0.8, beta=0.005)
+    bbox_ema = None             # (cx, cy, size) EMA → stable hamer crop across frames
+    prev_time = time.monotonic()
+    fps = 0.0
+    cur_joint = 0
 
     try:
         while True:
@@ -209,6 +220,11 @@ def main():
             if not ok:
                 time.sleep(0.01)
                 continue
+
+            now = time.monotonic()
+            dt = now - prev_time
+            prev_time = now
+            fps = 0.9 * fps + 0.1 * (1.0 / max(dt, 1e-6))
 
             frame = cv2.flip(frame, 1)   # mirror
             h, w = frame.shape[:2]
@@ -220,6 +236,8 @@ def main():
                 if hand is None:
                     # no hand matching the configured handedness → no-hand branch
                     last_hres = None
+                    smoothed_kp = None
+                    bbox_ema = None
                     if frame_count % 30 == 0:
                         print(f"  (no {args.hand} hand detected)")
                     if leap is not None:
@@ -239,17 +257,31 @@ def main():
                         if frame_count % (args.skip + 1) == 0:
                             bbox = hand_bbox_from_landmarks(mp_pts, (h, w))
                             if bbox is not None:
-                                new_hres = h3d.regress(frame, bbox)
+                                # EMA the bbox center+size so consecutive hamer crops
+                                # stay consistent (MediaPipe landmark jitter → stable 3D)
+                                cx = (bbox[0] + bbox[2]) / 2.0
+                                cy = (bbox[1] + bbox[3]) / 2.0
+                                sz = bbox[2] - bbox[0]
+                                if bbox_ema is None:
+                                    bbox_ema = np.array([cx, cy, sz])
+                                else:
+                                    bbox_ema = 0.5 * bbox_ema + 0.5 * np.array([cx, cy, sz])
+                                half = bbox_ema[2] / 2.0
+                                eb = (int(round(bbox_ema[0] - half)),
+                                      int(round(bbox_ema[1] - half)),
+                                      int(round(bbox_ema[0] + half)),
+                                      int(round(bbox_ema[1] + half)))
+                                new_hres = h3d.regress(frame, eb)
                                 if new_hres is not None:
                                     last_hres = new_hres
                         hres = last_hres
 
                     if hres is not None:
-                        pts = hres.kp3d
+                        pts = smoothed_kp = kp_smoother(hres.kp3d)
                         angles = calibrator.map_points(pts)
                         bent, scores = finger_id.identify_points(pts)
                         if show_diag:
-                            frame = _draw_hamer_overlay(frame, h3d, hres, mp_pts)
+                            frame = _draw_hamer_overlay(frame, h3d, hres, mp_pts, pts3d=pts)
                         source = "HAMER 3D"
                     else:
                         angles = calibrator.map(hand, (h, w))
@@ -263,14 +295,16 @@ def main():
                         leap.set_leap(OPEN_POSE + JOINT_DIR * angles)
 
                     draw_hud(frame, angles, calibrator, bent, scores, show_diag)
-                    cv2.putText(frame, f"3D: {source}", (10, h - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                    cv2.putText(frame, f"3D: {source}   {fps:4.0f} fps",
+                                (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                                 (0, 255, 255) if source == "HAMER 3D" else (0, 120, 255), 2)
 
                     if frame_count % 20 == 0:
                         print_angles_table(angles, bent, scores)
             else:
                 last_hres = None
+                smoothed_kp = None
+                bbox_ema = None
                 if frame_count % 30 == 0:
                     print("  (no hand detected)")
                 if leap is not None:
@@ -287,10 +321,12 @@ def main():
                 elif key == ord(" "):
                     if results and hand is not None:
                         if hres is not None:
-                            baseline = calibrator.calibrate_points(hres.kp3d)
+                            baseline = calibrator.calibrate_points(
+                                smoothed_kp if smoothed_kp is not None else hres.kp3d)
                         else:
                             baseline = calibrator.calibrate(hand, (h, w))
                         angle_filter.reset()
+                        kp_smoother.reset()
                         print(f"\n  *** CALIBRATED! baseline max: {baseline.max():.3f} rad ***\n")
                 elif key == ord("d"):
                     show_diag = not show_diag
@@ -298,6 +334,19 @@ def main():
                 elif key == ord("m"):
                     hamer_on = not hamer_on
                     print(f"\n  3D source: {'hamer' if hamer_on else 'MediaPipe pseudo-3D'}\n")
+                elif key == 9:  # Tab — cycle joint 0-15 for gain tuning
+                    cur_joint = (cur_joint + 1) % 16
+                    _, f, j, _ = _MOTOR_DIAG[cur_joint]
+                    print(f"  ▶ Joint {cur_joint} ({f} {j}) gain={mapper.joint_gain[cur_joint]:.2f}")
+                elif key in (ord("["), ord("]")):
+                    delta = -0.05 if key == ord("[") else 0.05
+                    mapper.joint_gain[cur_joint] += delta
+                    _, f, j, _ = _MOTOR_DIAG[cur_joint]
+                    print(f"  Joint {cur_joint} ({f} {j}) gain={mapper.joint_gain[cur_joint]:+.2f}")
+                elif key == ord("r"):
+                    mapper.joint_gain[cur_joint] = 1.0
+                    _, f, j, _ = _MOTOR_DIAG[cur_joint]
+                    print(f"  Joint {cur_joint} ({f} {j}) gain reset → 1.00")
                 elif key == ord("s"):
                     mapper.save_gain(str(gain_path))
 
