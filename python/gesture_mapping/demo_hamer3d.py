@@ -301,6 +301,8 @@ def main():
                         bent, scores = finger_id.identify_points(pts)
                         source = _SOURCE_NAMES[1]
                     else:
+                        # pseudo-3D 源: 角度来自 MediaPipe 伪 z, 校准用 HandResult 路径
+                        smoothed_kp = None
                         angles = calibrator.map(hand, (h, w))
                         bent, scores = finger_id.identify(hand, (h, w))
                         source = _SOURCE_NAMES[2]
@@ -337,9 +339,10 @@ def main():
                     break
                 elif key == ord(" "):
                     if results and hand is not None:
-                        if hres is not None:
-                            baseline = calibrator.calibrate_points(
-                                smoothed_kp if smoothed_kp is not None else hres.kp3d)
+                        # 校准必须用"本帧实际驱动角度的点源": hamer/world 用 points 基线,
+                        # 伪 3D 用 HandResult 基线 (两套基线槽位分离, 不可混用)
+                        if smoothed_kp is not None:
+                            baseline = calibrator.calibrate_points(smoothed_kp)
                         else:
                             baseline = calibrator.calibrate(hand, (h, w))
                         angle_filter.reset()
