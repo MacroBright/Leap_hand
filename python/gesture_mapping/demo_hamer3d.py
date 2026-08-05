@@ -277,7 +277,7 @@ def main():
                         hres = last_hres
 
                     if hres is not None:
-                        pts = smoothed_kp = kp_smoother(hres.kp3d)
+                        pts = smoothed_kp = kp_smoother(hres.kp3d.reshape(-1)).reshape(21, 3)
                         angles = calibrator.map_points(pts)
                         bent, scores = finger_id.identify_points(pts)
                         if show_diag:
