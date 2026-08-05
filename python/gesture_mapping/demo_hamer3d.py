@@ -32,6 +32,7 @@ from gesture_mapping.demo_realtime import (
     _OpenCVCamera, find_best_camera, draw_hud, print_motor_mapping,
     print_angles_table,
 )
+import leap_hand_utils.leap_hand_utils as lhu
 
 
 # MANO skeleton connectivity (MediaPipe-index) for the 3D overlay
@@ -45,12 +46,12 @@ _KP_CONN = [
 
 
 def _select_hand(results, hand: str):
-    if hand == "first" or len(results) == 1:
+    if hand == "first":
         return results[0]
     for r in results:
         if r.handedness.lower() == hand:
             return r
-    return results[0]
+    return None
 
 
 def _draw_hamer_overlay(frame, h3d, hres, mp_pts):
@@ -110,9 +111,12 @@ def main():
     parser.add_argument("--no-display", action="store_true")
     parser.add_argument("--skip", type=int, default=0,
                         help="run hamer every (skip+1) frames (0 = every frame)")
-    parser.add_argument("--hand", type=str, default="first",
+    parser.add_argument("--hand", type=str, default="right",
                         choices=["first", "right", "left"],
-                        help="which MediaPipe hand to track")
+                        help="which MediaPipe hand to track. The frame is mirrored "
+                             "(cv2.flip), so handedness labels are relative to the "
+                             "mirrored image — if the robot tracks the wrong hand, "
+                             "try --hand left")
     parser.add_argument("--img", type=str, default=None,
                         help="run on a single image and exit")
     args = parser.parse_args()
@@ -202,44 +206,59 @@ def main():
 
             if results:
                 hand = _select_hand(results, args.hand)
-                mp_pts = tracker.landmark_xy(hand, (h, w))
-                frame = tracker.draw_landmarks(frame, [hand])
-
                 hres = None
-                if h3d.available and hamer_on:
-                    if frame_count % (args.skip + 1) == 0:
-                        bbox = hand_bbox_from_landmarks(mp_pts, (h, w))
-                        if bbox is not None:
-                            new_hres = h3d.regress(frame, bbox)
-                            if new_hres is not None:
-                                last_hres = new_hres
-                    hres = last_hres
-
-                if hres is not None:
-                    pts = hres.kp3d
-                    angles = calibrator.map_points(pts)
-                    bent, scores = finger_id.identify_points(pts)
-                    if show_diag:
-                        frame = _draw_hamer_overlay(frame, h3d, hres, mp_pts)
-                    source = "HAMER 3D"
+                if hand is None:
+                    # no hand matching the configured handedness → no-hand branch
+                    last_hres = None
+                    if frame_count % 30 == 0:
+                        print(f"  (no {args.hand} hand detected)")
+                    if leap is not None:
+                        leap.set_open()
                 else:
-                    angles = calibrator.map(hand, (h, w))
-                    bent, scores = finger_id.identify(hand, (h, w))
-                    source = "MP FALLBACK"
+                    mp_pts = tracker.landmark_xy(hand, (h, w))
+                    frame = tracker.draw_landmarks(frame, [hand])
 
-                angles = angle_filter(angles)
+                    # Gate hamer on the configured hand: the right-MANO model must
+                    # never see a left-hand crop (silently mirrored/wrong angles).
+                    # "first" is a legacy escape hatch that skips the handedness gate.
+                    run_hamer = (args.hand == "first"
+                                 or hand.handedness.lower() == args.hand)
 
-                if leap is not None:
-                    from main import OPEN_POSE
-                    leap.set_leap(OPEN_POSE + JOINT_DIR * angles)
+                    hres = None
+                    if run_hamer and h3d.available and hamer_on:
+                        if frame_count % (args.skip + 1) == 0:
+                            bbox = hand_bbox_from_landmarks(mp_pts, (h, w))
+                            if bbox is not None:
+                                new_hres = h3d.regress(frame, bbox)
+                                if new_hres is not None:
+                                    last_hres = new_hres
+                        hres = last_hres
 
-                draw_hud(frame, angles, calibrator, bent, scores, show_diag)
-                cv2.putText(frame, f"3D: {source}", (10, h - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                            (0, 255, 255) if source == "HAMER 3D" else (0, 120, 255), 2)
+                    if hres is not None:
+                        pts = hres.kp3d
+                        angles = calibrator.map_points(pts)
+                        bent, scores = finger_id.identify_points(pts)
+                        if show_diag:
+                            frame = _draw_hamer_overlay(frame, h3d, hres, mp_pts)
+                        source = "HAMER 3D"
+                    else:
+                        angles = calibrator.map(hand, (h, w))
+                        bent, scores = finger_id.identify(hand, (h, w))
+                        source = "MP FALLBACK"
 
-                if frame_count % 20 == 0:
-                    print_angles_table(angles, bent, scores)
+                    angles = angle_filter(angles)
+
+                    if leap is not None:
+                        from main import OPEN_POSE
+                        leap.set_leap(lhu.angle_safety_clip(OPEN_POSE + JOINT_DIR * angles))
+
+                    draw_hud(frame, angles, calibrator, bent, scores, show_diag)
+                    cv2.putText(frame, f"3D: {source}", (10, h - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                                (0, 255, 255) if source == "HAMER 3D" else (0, 120, 255), 2)
+
+                    if frame_count % 20 == 0:
+                        print_angles_table(angles, bent, scores)
             else:
                 last_hres = None
                 if frame_count % 30 == 0:
@@ -256,7 +275,7 @@ def main():
                 if key in (ord("q"), 27):
                     break
                 elif key == ord(" "):
-                    if results:
+                    if results and hand is not None:
                         if hres is not None:
                             baseline = calibrator.calibrate_points(hres.kp3d)
                         else:

@@ -25,7 +25,8 @@ def test_hamer_and_mediapipe_angles_for_pose_images():
     tracker = HandTracker(max_num_hands=1)
     mapper = JointMapper()
 
-    imgs = sorted(glob.glob(os.path.join(IMAGES_DIR, "*.jpg")))
+    imgs = sorted(p for p in glob.glob(os.path.join(IMAGES_DIR, "*.jpg"))
+                  if "_compare" not in os.path.basename(p))
     if not imgs:
         pytest.skip("no images in python/images/")
 
