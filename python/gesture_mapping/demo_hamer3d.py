@@ -92,6 +92,28 @@ def _smoothed_frame(pts, smoother):
     return (wrist, normal, mid_dir, lateral)
 
 
+# 手丢失时的位姿过渡: 短时保持(避免闪烁抖动) → 平滑回到 OPEN(安全中性位)
+_RELAX_HOLD = 0.30   # s
+_RELAX_TIME = 0.60   # s
+
+
+def _relax_pose(now, loss_t0, relax_from, last_commanded_pose, open_pose, motor_limits):
+    """手丢失时计算过渡位姿. 返回 (pose, loss_t0, relax_from)."""
+    if loss_t0 is None:
+        loss_t0 = now
+        relax_from = (last_commanded_pose.copy() if last_commanded_pose is not None
+                      else open_pose.copy())
+    elapsed = now - loss_t0
+    if elapsed < _RELAX_HOLD:
+        pose = relax_from          # 短时丢失: 保持上一帧, 不平滑则不动
+    else:
+        t = min(1.0, (elapsed - _RELAX_HOLD) / _RELAX_TIME)
+        pose = relax_from + (open_pose - relax_from) * t   # 线性平滑回 OPEN
+    if motor_limits is not None:
+        pose = np.clip(pose, motor_limits[0], motor_limits[1])
+    return pose, loss_t0, relax_from
+
+
 def _select_hand(results, hand: str):
     """Select the tracked hand. `hand` is the USER's physical hand ("right" /
     "left"); due to the mirror flip it is matched against the opposite MediaPipe
@@ -267,6 +289,9 @@ def main():
     show_diag = False
     source_mode = 1              # 0=hamer, 1=MediaPipe world-3D (默认), 2=伪3D (M 循环)
     last_hres = None
+    last_commanded_pose = None   # 实际发送的绝对位姿 (丢失时平滑回 OPEN 的起点)
+    loss_t0 = None               # 手丢失时刻 (monotonic)
+    relax_from = None            # 丢失时从哪个位姿开始回 OPEN
     last_good = None            # (angles, bent, scores, source) 坏帧保持
     smoothed_kp = None          # last OneEuro-smoothed kp3d (angles + calibration source)
     kp_smoother = OneEuroFilter(n_joints=63, min_cutoff=0.8, beta=0.005)
@@ -311,8 +336,14 @@ def main():
                     if frame_count % 30 == 0:
                         print(f"  (no {args.hand} hand detected)")
                     if leap is not None:
-                        leap.set_open()
+                        from main import OPEN_POSE
+                        pose, loss_t0, relax_from = _relax_pose(
+                            time.monotonic(), loss_t0, relax_from,
+                            last_commanded_pose, OPEN_POSE, motor_limits)
+                        leap.set_leap(pose)
                 else:
+                    loss_t0 = None          # 有手可用 → 重置丢失回退状态
+                    relax_from = None
                     mp_pts = tracker.landmark_xy(hand, (h, w))
                     frame = tracker.draw_landmarks(frame, [hand])
                     quality = _frame_quality(hand)
@@ -386,6 +417,7 @@ def main():
                         if motor_limits is not None:
                             pose = np.clip(pose, motor_limits[0], motor_limits[1])
                         leap.set_leap(pose)
+                        last_commanded_pose = pose
 
                     draw_hud(frame, angles, calibrator, bent, scores, show_diag)
                     cv2.putText(frame, f"3D: {source}   {fps:4.0f} fps",
@@ -404,7 +436,11 @@ def main():
                 if frame_count % 30 == 0:
                     print("  (no hand detected)")
                 if leap is not None:
-                    leap.set_open()
+                    from main import OPEN_POSE
+                    pose, loss_t0, relax_from = _relax_pose(
+                        time.monotonic(), loss_t0, relax_from,
+                        last_commanded_pose, OPEN_POSE, motor_limits)
+                    leap.set_leap(pose)
 
             if not args.no_display:
                 if frame_count == 0:
