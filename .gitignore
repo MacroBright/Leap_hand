@@ -173,3 +173,4 @@ python/gesture_mapping/joint_gain.json
 python/gesture_mapping/motor_limits.json
 # 3D 张开基线 (机器/手型相关)
 python/gesture_mapping/calibration_3d.json
+python/MUJOCO_LOG.TXT
