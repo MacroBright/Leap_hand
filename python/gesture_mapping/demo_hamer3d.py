@@ -181,8 +181,6 @@ def main():
     parser.add_argument("--camera", type=int, default=-1,
                         help="Camera index (default: auto-detect)")
     parser.add_argument("--drive", action="store_true", help="Drive LEAP Hand hardware")
-    parser.add_argument("--sim", action="store_true",
-                        help="Drive the MuJoCo simulated hand instead of hardware (with --drive)")
     parser.add_argument("--no-display", action="store_true")
     parser.add_argument("--skip", type=int, default=1,
                         help="run hamer every (skip+1) frames (1 = every 2nd; "
@@ -242,17 +240,9 @@ def main():
     leap = None
     if args.drive:
         from main import OPEN_POSE
-        if args.sim:
-            from sim.sim_leap import SimLeap
-            try:
-                leap = SimLeap()
-                print("[INFO] MuJoCo simulation hand ready (--sim).")
-            except Exception as e:
-                print(f"[WARN] Sim init failed: {e}")
-        else:
-            # 真机安全: 延迟上电 — 张开手对准相机, 按 SPACE 完成全开校准后才连接上电
-            # (防止未校准就上电时关节角度不对, 损伤电机)
-            print("[INFO] 真机模式: 电机未上电。张开手对准相机, 按 SPACE 校准后上电驱动。")
+        # 真机安全: 延迟上电 — 张开手对准相机, 按 SPACE 完成全开校准后才连接上电
+        # (防止未校准就上电时关节角度不对, 损伤电机)
+        print("[INFO] 真机模式: 电机未上电。张开手对准相机, 按 SPACE 校准后上电驱动。")
 
     if args.img:
         run_image(args.img, tracker, h3d, mapper)
@@ -451,7 +441,7 @@ def main():
                     leap.set_leap(pose)
 
             if not args.no_display:
-                if args.drive and not args.sim and leap is None:
+                if args.drive and leap is None:
                     # 真机未上电提示: 张开手按 SPACE 校准后上电
                     cv2.putText(frame, "SPACE 未上电: 张开手按 SPACE 校准并上电",
                                 (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX,
@@ -466,7 +456,7 @@ def main():
                 elif key == ord(" "):
                     if results and hand is not None:
                         # 真机延迟上电: 首次按 SPACE (张开手校准) 时才连接上电
-                        if args.drive and not args.sim and leap is None:
+                        if args.drive and leap is None:
                             from main import LeapNode
                             try:
                                 leap = LeapNode()
