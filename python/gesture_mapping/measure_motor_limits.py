@@ -46,11 +46,15 @@ def main():
                         help="串口 (默认自动搜索 ttyUSB0/1, COM13)")
     parser.add_argument("--out", type=str, default=None,
                         help="输出 json 路径 (默认 python/gesture_mapping/motor_limits.json)")
+    parser.add_argument("--motor", type=int, nargs="+", default=None,
+                        help="只测指定电机 (默认全部 0-15), 例: --motor 4")
     args = parser.parse_args()
 
     leap = LeapNode(port=args.port)
     motors = list(leap.motors)
     dxl = leap.dxl_client
+    to_measure = args.motor if args.motor is not None else list(range(16))
+    TAU = 2.0 * np.pi
 
     limits_min = np.zeros(16, dtype=np.float64)
     limits_max = np.zeros(16, dtype=np.float64)
@@ -61,7 +65,7 @@ def main():
         print("[INFO] 转矩已关闭, 手指可手动推动。Ctrl+C 随时退出。")
         input("    准备就绪后按 Enter 开始逐个电机测量...")
 
-        for mid in range(16):
+        for mid in to_measure:
             label = _MOTOR_LABELS[mid]
             while True:
                 print(f"\n=== Motor {mid:2d} ({label}) ===")
@@ -72,6 +76,15 @@ def main():
                 time.sleep(0.3)
                 pmax = float(dxl.read_pos()[mid])
                 lo, hi = min(pmin, pmax), max(pmin, pmax)
+                # 2π 回绕解算: 若 OPEN_POSE 不在 [lo,hi], 整体平移 ±2π 使其落入 (如 Idx PIP 跨 0/2π 边界)
+                for k in (-1, 0, 1):
+                    if lo + k * TAU <= OPEN_POSE[mid] <= hi + k * TAU:
+                        lo, hi = lo + k * TAU, hi + k * TAU
+                        break
+                if not (lo <= OPEN_POSE[mid] <= hi):
+                    print("[WARN] OPEN_POSE 无法回绕落入范围 — 该电机请重测")
+                if hi - lo < 0.05:
+                    print("[WARN] 该电机范围近零 (<0.05 rad) — 可能未推动, 建议重测")
                 print(f"  读得: min={lo:.4f}  max={hi:.4f}  (range {hi - lo:.4f} rad)")
                 choice = input("  确认? [Enter=保存, r=重测该电机] ").strip().lower()
                 if choice != "r":
