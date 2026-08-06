@@ -181,6 +181,8 @@ def main():
     parser.add_argument("--camera", type=int, default=-1,
                         help="Camera index (default: auto-detect)")
     parser.add_argument("--drive", action="store_true", help="Drive LEAP Hand hardware")
+    parser.add_argument("--sim", action="store_true",
+                        help="Drive the MuJoCo simulated hand instead of hardware (with --drive)")
     parser.add_argument("--no-display", action="store_true")
     parser.add_argument("--skip", type=int, default=1,
                         help="run hamer every (skip+1) frames (1 = every 2nd; "
@@ -239,12 +241,21 @@ def main():
 
     leap = None
     if args.drive:
-        from main import LeapNode, OPEN_POSE
-        try:
-            leap = LeapNode()
-            print("[INFO] LEAP Hand connected.")
-        except OSError as e:
-            print(f"[WARN] Cannot connect: {e}")
+        from main import OPEN_POSE
+        if args.sim:
+            from sim.sim_leap import SimLeap
+            try:
+                leap = SimLeap()
+                print("[INFO] MuJoCo simulation hand ready (--sim).")
+            except Exception as e:
+                print(f"[WARN] Sim init failed: {e}")
+        else:
+            from main import LeapNode
+            try:
+                leap = LeapNode()
+                print("[INFO] LEAP Hand connected.")
+            except OSError as e:
+                print(f"[WARN] Cannot connect: {e}")
 
     if args.img:
         run_image(args.img, tracker, h3d, mapper)
