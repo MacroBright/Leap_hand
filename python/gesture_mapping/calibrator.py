@@ -6,7 +6,9 @@ FingerIdentifier: detect which human finger is currently bent.
 Workstream: W1 手势映射 — .claude/workstreams/01-gesture-mapping.md
 """
 
+import json
 import numpy as np
+from pathlib import Path
 from typing import Dict, Optional, Tuple
 from .hand_tracker import HandResult
 from .joint_mapper import (JointMapper, _FINGER_MAP, _FINGER_CHAIN,
@@ -60,18 +62,37 @@ class Calibrator:
         self._calibrated = True
         return self._baseline
 
-    def calibrate_points(self, pts: np.ndarray) -> np.ndarray:
+    def calibrate_points(self, pts: np.ndarray, frame=None) -> np.ndarray:
         """Record current 3D point cloud as the zero reference (call with hand fully open)."""
-        self._baseline_points = self.mapper.map_points_to_leap(pts)
+        self._baseline_points = self.mapper.map_points_to_leap(pts, frame=frame)
         self._calibrated_points = True
         return self._baseline_points
 
-    def map_points(self, pts: np.ndarray) -> np.ndarray:
+    def map_points(self, pts: np.ndarray, frame=None) -> np.ndarray:
         """Zero-corrected joint angles from a (21,3) point cloud (hamer path)."""
-        raw = self.mapper.map_points_to_leap(pts)
+        raw = self.mapper.map_points_to_leap(pts, frame=frame)
         if self._calibrated_points and self._baseline_points is not None:
             return np.clip(raw - self._baseline_points, -0.3, 2.8)
         return raw
+
+    def save_points_baseline(self, path) -> None:
+        """Persist the points baseline so a later session doesn't need re-zeroing."""
+        if self._baseline_points is not None:
+            with open(path, "w") as f:
+                json.dump(
+                    {"baseline_points": [float(x) for x in self._baseline_points]},
+                    f, indent=2,
+                )
+
+    def load_points_baseline(self, path) -> bool:
+        """Load a persisted points baseline; returns True if loaded."""
+        if Path(path).exists():
+            with open(path) as f:
+                data = json.load(f)
+            self._baseline_points = np.array(data["baseline_points"], dtype=np.float64)
+            self._calibrated_points = True
+            return True
+        return False
 
     def map(
         self,

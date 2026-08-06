@@ -133,12 +133,20 @@ class JointMapper:
         pts = self._build_point_cloud(hand_result, image_shape)
         return self.map_points_to_leap(pts)
 
-    def map_points_to_leap(self, pts: np.ndarray) -> np.ndarray:
+    def map_points_to_leap(
+        self,
+        pts: np.ndarray,
+        frame: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = None,
+    ) -> np.ndarray:
         """Map a (21,3) point cloud to LEAP 16-DOF relative joint angles.
 
         Accepts any metric/normalized coordinate frame — angle computation is
         scale-invariant. This is the hamer 3D entry point (real MANO kp3d,
         MediaPipe-index order) and the shared core for the MediaPipe path.
+
+        frame: optional pre-computed (wrist, normal, mid_dir, lateral) palm
+               reference — lets callers apply temporal smoothing to the frame
+               so fan angles don't jitter with the hand's motion.
         """
         pts = np.asarray(pts, dtype=np.float64)
         if pts.shape != (_NUM_LANDMARKS, 3):
@@ -146,7 +154,10 @@ class JointMapper:
                 f"expected a ({_NUM_LANDMARKS}, 3) point cloud, got {pts.shape}"
             )
 
-        wrist_pt, palm_normal, mid_dir, lateral = self._palm_frame(pts)
+        if frame is None:
+            wrist_pt, palm_normal, mid_dir, lateral = self._palm_frame(pts)
+        else:
+            wrist_pt, palm_normal, mid_dir, lateral = frame
         idx_dir = self._plane_dir(pts[Landmark["INDEX_MCP"]],
                                   pts[Landmark["INDEX_PIP"]], palm_normal)
         if np.linalg.norm(idx_dir) < 1e-9:
@@ -178,9 +189,10 @@ class JointMapper:
     def map_points_to_leap_dict(
         self,
         pts: np.ndarray,
+        frame: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = None,
     ) -> Dict[str, Dict[str, float]]:
         """Like map_points_to_leap() but returns a labeled dict."""
-        angles = self.map_points_to_leap(pts)
+        angles = self.map_points_to_leap(pts, frame=frame)
         result = {}
         for i, name in enumerate(_OUTPUT_FINGER_KEYS):
             start = i * 4

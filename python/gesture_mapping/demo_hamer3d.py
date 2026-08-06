@@ -67,6 +67,31 @@ def _frame_quality(hand) -> float:
         return 1.0
 
 
+def _smoothed_frame(pts, smoother):
+    """计算掌心参考系并对 normal/mid_dir/lateral 做时域平滑.
+
+    参考系逐帧抖动/翻转是"张开手移动时 fan 角跳变"的主因;
+    平滑后传入 map_points_to_leap 的 frame 参数即可稳定侧摆角。
+    """
+    wrist, normal, mid_dir, lateral = JointMapper._palm_frame(pts)
+    fvec = smoother(np.concatenate([normal, mid_dir, lateral]))
+    normal, mid_dir, lateral = fvec[:3], fvec[3:6], fvec[6:9]
+    for v in (normal, mid_dir):
+        n = np.linalg.norm(v)
+        if n > 1e-9:
+            v /= n
+    lateral = lateral - np.dot(lateral, mid_dir) * mid_dir
+    n = np.linalg.norm(lateral)
+    if n > 1e-9:
+        lateral /= n
+    else:
+        lateral = np.cross(normal, mid_dir)
+        n = np.linalg.norm(lateral)
+        if n > 1e-9:
+            lateral /= n
+    return (wrist, normal, mid_dir, lateral)
+
+
 def _select_hand(results, hand: str):
     """Select the tracked hand. `hand` is the USER's physical hand ("right" /
     "left"); due to the mirror flip it is matched against the opposite MediaPipe
@@ -169,6 +194,11 @@ def main():
     else:
         mapper.joint_gain = np.ones(16)
 
+    # 持久化张开基线: 上次 SPACE 校准结果自动加载, 免去每次会话重新调 0
+    calib_path = Path(__file__).resolve().parent / "calibration_3d.json"
+    if calibrator.load_points_baseline(str(calib_path)):
+        print(f"[INFO] Loaded 3D calibration baseline: {calib_path}")
+
     # 实测电机限位表 (Task D): 若存在, --drive 写入前裁剪到机械范围.
     # 格式: {"min": [16], "max": [16]} (rad, 伺服真实位置). 无表 → 不裁剪 (兼容旧行为).
     motor_limits = None
@@ -239,7 +269,8 @@ def main():
     last_good = None            # (angles, bent, scores, source) 坏帧保持
     smoothed_kp = None          # last OneEuro-smoothed kp3d (angles + calibration source)
     kp_smoother = OneEuroFilter(n_joints=63, min_cutoff=0.8, beta=0.005)
-    world_smoother = OneEuroFilter(n_joints=63, min_cutoff=1.5, beta=0.004)
+    world_smoother = OneEuroFilter(n_joints=63, min_cutoff=1.2, beta=0.004)
+    frame_smoother = OneEuroFilter(n_joints=9, min_cutoff=1.0, beta=0.005)
     bbox_ema = None             # (cx, cy, size) EMA → stable hamer crop across frames
     prev_time = time.monotonic()
     fps = 0.0
@@ -275,6 +306,7 @@ def main():
                     smoothed_kp = None
                     bbox_ema = None
                     world_smoother.reset()
+                    frame_smoother.reset()
                     if frame_count % 30 == 0:
                         print(f"  (no {args.hand} hand detected)")
                     if leap is not None:
@@ -321,7 +353,8 @@ def main():
                     else:
                         if source_mode == 0 and hres is not None:
                             pts = smoothed_kp = kp_smoother(hres.kp3d.reshape(-1)).reshape(21, 3)
-                            angles = calibrator.map_points(pts)
+                            palm_frame = _smoothed_frame(pts, frame_smoother)
+                            angles = calibrator.map_points(pts, frame=palm_frame)
                             bent, scores = finger_id.identify_points(pts)
                             if show_diag:
                                 frame = _draw_hamer_overlay(frame, h3d, hres, mp_pts, pts3d=pts)
@@ -332,7 +365,8 @@ def main():
                                 [[lm.x, lm.y, lm.z] for lm in hand.world_landmarks],
                                 dtype=np.float64)
                             pts = smoothed_kp = world_smoother(wpts.reshape(-1)).reshape(21, 3)
-                            angles = calibrator.map_points(pts)
+                            palm_frame = _smoothed_frame(pts, frame_smoother)
+                            angles = calibrator.map_points(pts, frame=palm_frame)
                             bent, scores = finger_id.identify_points(pts)
                             source = _SOURCE_NAMES[1]
                         else:
@@ -365,6 +399,7 @@ def main():
                 smoothed_kp = None
                 bbox_ema = None
                 world_smoother.reset()
+                frame_smoother.reset()
                 if frame_count % 30 == 0:
                     print("  (no hand detected)")
                 if leap is not None:
@@ -383,12 +418,15 @@ def main():
                         # 校准必须用"本帧实际驱动角度的点源": hamer/world 用 points 基线,
                         # 伪 3D 用 HandResult 基线 (两套基线槽位分离, 不可混用)
                         if smoothed_kp is not None:
-                            baseline = calibrator.calibrate_points(smoothed_kp)
+                            palm_frame = _smoothed_frame(smoothed_kp, frame_smoother)
+                            baseline = calibrator.calibrate_points(smoothed_kp, frame=palm_frame)
+                            calibrator.save_points_baseline(str(calib_path))
                         else:
                             baseline = calibrator.calibrate(hand, (h, w))
                         angle_filter.reset()
                         kp_smoother.reset()
                         world_smoother.reset()
+                        frame_smoother.reset()
                         print(f"\n  *** CALIBRATED! baseline max: {baseline.max():.3f} rad ***\n")
                 elif key == ord("d"):
                     show_diag = not show_diag

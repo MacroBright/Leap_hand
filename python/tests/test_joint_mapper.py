@@ -147,3 +147,16 @@ def test_map_points_rejects_bad_shape():
     mapper = JointMapper()
     with pytest.raises(ValueError):
         mapper.map_points_to_leap(np.zeros((20, 3)))
+
+
+def test_map_points_accepts_explicit_frame():
+    mapper = JointMapper()
+    pts = _open_hand_pts()
+    auto = mapper.map_points_to_leap(pts)
+    # 传入与 _palm_frame 相同的参考系 → 结果与自动计算一致
+    frame = mapper._palm_frame(pts)
+    assert np.allclose(auto, mapper.map_points_to_leap(pts, frame=frame))
+    # 传入乱参考系 → 结果不同 (证明 frame 被使用)
+    bad = (frame[0], np.array([1.0, 0.0, 0.0]),
+           np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0]))
+    assert not np.allclose(auto, mapper.map_points_to_leap(pts, frame=bad))

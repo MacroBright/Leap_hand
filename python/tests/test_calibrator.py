@@ -43,6 +43,23 @@ def test_identify_points_index_bent():
     assert scores["index"] >= 0.20
 
 
+def test_points_baseline_save_load(tmp_path):
+    """Persisted points baseline survives a new Calibrator (no per-session SPACE)."""
+    mapper = JointMapper()
+    open_pts = _open_hand_pts()
+    cal = Calibrator(mapper)
+    cal.calibrate_points(open_pts)
+    p = tmp_path / "calib_3d.json"
+    cal.save_points_baseline(str(p))
+
+    cal2 = Calibrator(mapper)
+    assert not cal2.is_calibrated
+    assert cal2.load_points_baseline(str(p))
+    assert cal2.is_calibrated
+    # 载入基线后, 同一张开点云应映射回 0
+    assert np.allclose(cal2.map_points(open_pts), 0.0, atol=1e-9)
+
+
 def test_points_and_hand_baselines_are_independent():
     """calibrate_points must not zero the HandResult-based map() and vice versa."""
     mapper = JointMapper()
