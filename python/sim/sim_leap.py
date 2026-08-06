@@ -10,8 +10,12 @@
 
 from pathlib import Path
 
+import os
+os.environ.setdefault("GLFW_PLATFORM", "x11")  # NVIDIA+Wayland 下 glfw viewer 退出易段错误 → 强制 X11
+
 import numpy as np
 import mujoco
+import mujoco.viewer  # 显式导入: mujoco 3.11 不随 import mujoco 自动加载 viewer
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
