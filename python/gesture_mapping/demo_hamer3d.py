@@ -250,12 +250,9 @@ def main():
             except Exception as e:
                 print(f"[WARN] Sim init failed: {e}")
         else:
-            from main import LeapNode
-            try:
-                leap = LeapNode()
-                print("[INFO] LEAP Hand connected.")
-            except OSError as e:
-                print(f"[WARN] Cannot connect: {e}")
+            # 真机安全: 延迟上电 — 张开手对准相机, 按 SPACE 完成全开校准后才连接上电
+            # (防止未校准就上电时关节角度不对, 损伤电机)
+            print("[INFO] 真机模式: 电机未上电。张开手对准相机, 按 SPACE 校准后上电驱动。")
 
     if args.img:
         run_image(args.img, tracker, h3d, mapper)
@@ -454,6 +451,11 @@ def main():
                     leap.set_leap(pose)
 
             if not args.no_display:
+                if args.drive and not args.sim and leap is None:
+                    # 真机未上电提示: 张开手按 SPACE 校准后上电
+                    cv2.putText(frame, "SPACE 未上电: 张开手按 SPACE 校准并上电",
+                                (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.55, (0, 0, 255), 2)
                 if frame_count == 0:
                     cv2.namedWindow("LEAP Hand — hamer 3D Mapper", cv2.WINDOW_NORMAL)
                     cv2.resizeWindow("LEAP Hand — hamer 3D Mapper", 960, 720)
@@ -463,6 +465,14 @@ def main():
                     break
                 elif key == ord(" "):
                     if results and hand is not None:
+                        # 真机延迟上电: 首次按 SPACE (张开手校准) 时才连接上电
+                        if args.drive and not args.sim and leap is None:
+                            from main import LeapNode
+                            try:
+                                leap = LeapNode()
+                                print("[INFO] LEAP Hand 已上电 (全开位)。")
+                            except OSError as e:
+                                print(f"[WARN] 上电失败: {e}")
                         # 校准必须用"本帧实际驱动角度的点源": hamer/world 用 points 基线,
                         # 伪 3D 用 HandResult 基线 (两套基线槽位分离, 不可混用)
                         if smoothed_kp is not None:
