@@ -180,6 +180,7 @@ def main():
         print("[INFO] HaMeR 3D ready (fp16, MANO regression)")
     else:
         print("[WARN] hamer unavailable (no CUDA / not installed) → MediaPipe pseudo-3D fallback")
+    print("[INFO] 默认 3D 源: MediaPipe world-3D (按 M 循环: world-3D → hamer → 伪3D)")
 
     mapper = JointMapper()
     calibrator = Calibrator(mapper)
@@ -264,7 +265,7 @@ def main():
 
     frame_count = 0
     show_diag = False
-    source_mode = 0              # 0=hamer, 1=MediaPipe world-3D, 2=伪3D (M 循环)
+    source_mode = 1              # 0=hamer, 1=MediaPipe world-3D (默认), 2=伪3D (M 循环)
     last_hres = None
     last_good = None            # (angles, bent, scores, source) 坏帧保持
     smoothed_kp = None          # last OneEuro-smoothed kp3d (angles + calibration source)
