@@ -21,10 +21,13 @@
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # 使 `main` (python/) 可导入
 
 from main import LeapNode, OPEN_POSE  # 复用串口搜索 + 初始化
 
