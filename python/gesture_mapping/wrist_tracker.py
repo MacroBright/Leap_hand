@@ -49,15 +49,18 @@ def build_palm_pts(hand, depth: Optional[np.ndarray],
                    K: Optional[K]) -> Optional[np.ndarray]:
     """从 HandResult + 对齐深度反投影出所需关键点 (21,3) 相机系 mm。
 
-    任一所需关键点深度无效时返回 None。hand.landmark_xy 是 (21,2) 像素。
+    任一所需关键点深度无效时返回 None。hand.landmarks 为归一化 Landmark
+    (x,y∈[0,1]), 用 depth.shape 换算像素。
     """
     if depth is None or K is None:
         return None
-    xy = hand.landmark_xy
+    h, w = depth.shape
+    lm = hand.landmarks
     pts = np.zeros((21, 3))
     for i in (_WRIST, _MCP_INDEX, _MCP_MIDDLE, _MCP_PINKY):
-        u, v = xy[i]
-        if not (0 <= u < depth.shape[1] and 0 <= v < depth.shape[0]):
+        u = lm[i].x * w
+        v = lm[i].y * h
+        if not (0 <= u < w and 0 <= v < h):
             return None
         z = median_depth_at(depth, u, v)
         if not math.isfinite(z):
@@ -156,6 +159,7 @@ class WristTracker:
 
     def capture_reference(self, pts21_cam: Optional[np.ndarray]) -> None:
         if pts21_cam is None:
+            self._has_ref = False
             return
         self._ref_pts = np.asarray(pts21_cam, float)
         f, n, _ = palm_basis(self._ref_pts)

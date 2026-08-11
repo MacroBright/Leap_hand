@@ -110,3 +110,36 @@ def test_j5j6_clamped_to_ranges():
         wt.update(now)
     assert wt.j5_pos_deg >= 89.0
     assert wt.j6_pos_deg == 0.0
+
+
+# ── build_palm_pts: HandResult 归一化 landmarks → 像素反投影 ──
+
+
+class _FakeLM:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+
+class _FakeHand:
+    def __init__(self, lms):
+        self.landmarks = lms
+
+
+def test_build_palm_pts_backprojects_pixels():
+    from gesture_mapping.wrist_tracker import build_palm_pts
+    h, w = 480, 640
+    depth = np.full((h, w), 1000, dtype=np.uint16)
+    lms = [_FakeLM(0, 0)] * 21
+    lms[0] = _FakeLM(320 / w, 240 / h)      # wrist → 中心 → 反投影 (0,0,1000)
+    lms[5] = _FakeLM(340 / w, 220 / h)      # index_mcp
+    lms[9] = _FakeLM(360 / w, 240 / h)      # middle_mcp
+    lms[17] = _FakeLM(300 / w, 260 / h)     # pinky_mcp
+    pts = build_palm_pts(_FakeHand(lms), depth, (500.0, 500.0, 320.0, 240.0))
+    assert pts is not None
+    np.testing.assert_allclose(pts[0], [0, 0, 1000], atol=1e-6)
+    assert np.all(np.isfinite(pts[5])) and np.all(np.isfinite(pts[9]))
+
+
+def test_build_palm_pts_none_when_hand_missing_depth():
+    from gesture_mapping.wrist_tracker import build_palm_pts
+    assert build_palm_pts(None, None, None) is None

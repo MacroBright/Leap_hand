@@ -77,59 +77,61 @@ def main():
     clutch = False
     print("\n按键: H=离合器(按住跟随,松开锚定)  C=重载标定  Y=急停  Q=退出\n")
 
-    while True:
-        ok, bgr, depth, K = cam.read_with_depth()
-        if not ok or bgr is None:
-            continue
-        hands = tracker.detect(bgr)
-        hand = hands[0] if hands else None
-        pts = build_palm_pts(hand, depth, K) if hand is not None else None
+    try:
+        while True:
+            ok, bgr, depth, K = cam.read_with_depth()
+            if not ok or bgr is None:
+                continue
+            hands = tracker.detect(bgr)
+            hand = hands[0] if hands else None
+            pts = build_palm_pts(hand, depth, K) if hand is not None else None
 
-        key = cv2.waitKey(1) & 0xFF
-        if key in _KEYS:
-            action = _KEYS[key]
-            if action == "clutch":
-                clutch = not clutch
-                wt.capture_reference(pts)
-            elif action == "calib" and Path(args.calib).exists():
-                R = load_calib(args.calib)
-                wt.R = R
-                print("[标定] 已重载 handeye")
-            elif action == "estop" and arm is not None:
-                arm.e_stop()
-                print("[急停] e_stop")
-            elif action == "quit":
-                break
+            key = cv2.waitKey(1) & 0xFF
+            if key in _KEYS:
+                action = _KEYS[key]
+                if action == "clutch":
+                    clutch = not clutch
+                    wt.capture_reference(pts)
+                elif action == "calib" and Path(args.calib).exists():
+                    R = load_calib(args.calib)
+                    wt.R = R
+                    wt.capture_reference(None)   # 清旧参考, 避免 R 系混用
+                    print("[标定] 已重载 handeye")
+                elif action == "estop" and arm is not None:
+                    arm.e_stop()
+                    print("[急停] e_stop")
+                elif action == "quit":
+                    break
 
-        if pts is None:
-            cmd = wt.no_hand()
-        elif clutch:
-            cmd = wt.update(pts)
-        else:
-            cmd = wt.no_hand()
+            if pts is None:
+                cmd = wt.no_hand()
+            elif clutch:
+                cmd = wt.update(pts)
+            else:
+                cmd = wt.no_hand()
 
-        cmd = cmd_smoother(np.array(cmd))
+            cmd = cmd_smoother(np.array(cmd))
+            if arm is not None:
+                arm.remote_event(*cmd)
+
+            # HUD
+            h, w = bgr.shape[:2]
+            cv2.putText(bgr, f"CLUTCH:{'ON' if clutch else 'OFF'}",
+                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                        (0, 255, 0) if clutch else (0, 0, 255), 2)
+            cv2.putText(bgr, f"v=({cmd[0]:+.2f},{cmd[1]:+.2f},{cmd[2]:+.2f}) "
+                             f"J5={cmd[3]:+.2f} J6={cmd[4]:+.2f}",
+                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+            cv2.putText(bgr, f"J5pos={wt.j5_pos_deg:5.1f}° J6pos={wt.j6_pos_deg:5.1f}°",
+                        (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+            cv2.imshow("Arm Teleop", bgr)
+    finally:
         if arm is not None:
-            arm.remote_event(*cmd)
-
-        # HUD
-        h, w = bgr.shape[:2]
-        cv2.putText(bgr, f"CLUTCH:{'ON' if clutch else 'OFF'}",
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                    (0, 255, 0) if clutch else (0, 0, 255), 2)
-        cv2.putText(bgr, f"v=({cmd[0]:+.2f},{cmd[1]:+.2f},{cmd[2]:+.2f}) "
-                         f"J5={cmd[3]:+.2f} J6={cmd[4]:+.2f}",
-                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-        cv2.putText(bgr, f"J5pos={wt.j5_pos_deg:5.1f}° J6pos={wt.j6_pos_deg:5.1f}°",
-                    (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-        cv2.imshow("Arm Teleop", bgr)
-
-    if arm is not None:
-        arm.remote_disable()
-        arm.close()
-    cam.release()
-    cv2.destroyAllWindows()
-    print("[退出] 已安全断开")
+            arm.remote_disable()
+            arm.close()
+        cam.release()
+        cv2.destroyAllWindows()
+        print("[退出] 已安全断开")
 
 
 if __name__ == "__main__":
