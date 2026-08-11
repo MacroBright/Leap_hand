@@ -52,3 +52,21 @@ def test_get_state_parse():
     assert abs(angles[0] - 90.0) < 1e-6
     c.close()
     s.close()
+
+
+def test_get_ee_parse():
+    from gesture_mapping.arm_client import ArmClient
+    import serial as _s
+    s = _s.serial_for_url("loop://", baudrate=115200, timeout=0.1)
+    c = ArmClient("loop://", ser=s)
+
+    def feed():
+        time.sleep(0.05)
+        s.write(b"EE:0.50,0.10,0.30,0.00,0.00,0.00\n")
+
+    t = threading.Thread(target=feed, daemon=True)
+    t.start()
+    ee = c.get_ee()
+    assert ee == [0.5, 0.1, 0.3]
+    c.close()
+    s.close()

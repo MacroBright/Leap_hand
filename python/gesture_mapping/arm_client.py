@@ -32,6 +32,17 @@ class ArmClient:
                 return values[:n], values[n:2 * n], values[2 * n:]
         return [], [], []
 
+    def get_ee(self):
+        """读取仿真末端世界坐标 (m). 真机固件无此命令 → 返回 None."""
+        self._ser.write(b"get_ee\n")
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            line = self._ser.readline().decode("ascii", errors="replace").strip()
+            if line.startswith("EE:"):
+                vals = [float(v) for v in line[3:].split(",")]
+                return vals[:3] if len(vals) >= 3 else None
+        return None
+
     def remote_enable(self) -> None:
         self._ser.write(b"remote_enable\n")
 

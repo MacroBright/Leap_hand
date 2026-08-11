@@ -66,7 +66,7 @@ def test_delta_to_velocity_deadzone_saturation():
     assert delta_to_velocity(1000.0, gain=0.01, deadzone=10.0) == 1.0  # 饱和
 
 
-# ── WristTracker 类 ───────────────────────────────────────
+# ── WristTracker 类 (位置跟随) ─────────────────────────────
 
 
 def _identity_pts21(hand_pts):
@@ -80,36 +80,57 @@ def _identity_pts21(hand_pts):
 
 def test_no_hand_zeroes():
     wt = WristTracker(R=rot_from_euler(0, 0, 0))
-    assert wt.update(None) == (0.0, 0.0, 0.0, 0.0, 0.0)
+    assert wt.update(None, np.zeros(3), 0, 0) == (0.0, 0.0, 0.0, 0.0, 0.0)
 
 
-def test_delta_drives_velocity():
+def test_position_loop_drives_velocity():
     R = rot_from_euler(0, 0, 0)
-    wt = WristTracker(R=R, gain_pos=0.001, deadzone_pos_mm=10.0)
+    wt = WristTracker(R=R)                       # k_pos=0.01, deadzone=8mm
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
-    wt.capture_reference(ref)
-    # 手沿 +x 移动 50mm (wrist 移到 (50,0,1000))
+    wt.capture(ref, np.zeros(3), 0.0, 0.0)
+    # 手沿 +x 移 50mm → 目标 (50,0,0)mm; ee 还在原点 → error 50mm
     now = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
-    vx, vy, vz, j5, j6 = wt.update(now)
-    assert vx > 0.03                     # (50-10)*0.001 = 0.04
+    vx, vy, vz, j5, j6 = wt.update(now, np.zeros(3), 0.0, 0.0)
+    assert vx > 0.03                     # (50-8)*0.01 = 0.42
     assert vy == 0.0 and vz == 0.0
-    assert j5 == 0.0 and j6 == 0.0
 
 
-def test_j5j6_clamped_to_ranges():
-    wt = WristTracker(R=rot_from_euler(0, 0, 0),
-                      gain_pitch=1.0, gain_roll=1.0,
-                      deadzone_ang_deg=0.0,
-                      j5_rate_deg_s=10.0, j6_rate_deg_s=10.0,
-                      dt=1.0)
+def test_position_loop_closes_error():
+    R = rot_from_euler(0, 0, 0)
+    wt = WristTracker(R=R)
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
-    wt.capture_reference(ref)
-    # 把 f 一直向上顶 → j5 应饱和在 j5_range 上限 (默认 90)
-    for _ in range(50):
-        now = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1050], [8, 0, 995]])
-        wt.update(now)
-    assert wt.j5_pos_deg >= 89.0
-    assert wt.j6_pos_deg == 0.0
+    wt.capture(ref, np.zeros(3), 0.0, 0.0)
+    # 手 +50mm, 但 ee 已到 (45,0,0)mm → 剩 5mm < 死区 8mm → 停
+    now = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
+    vx, vy, vz, j5, j6 = wt.update(now, np.array([45.0, 0.0, 0.0]), 0.0, 0.0)
+    assert vx == 0.0
+    assert vy == 0.0 and vz == 0.0
+
+
+def test_j5_target_clamped():
+    R = rot_from_euler(0, 0, 0)
+    wt = WristTracker(R=R)
+    ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
+    wt.capture(ref, np.zeros(3), 0.0, 0.0)
+    # 手一直"向上" (f 的 z 分量大) → j5 目标应钳制 ≤90°, j5/j6 命令有界
+    up = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1050], [8, 0, 995]])
+    vx, vy, vz, j5, j6 = wt.update(up, np.zeros(3), 0.0, 0.0)
+    assert wt.last_target_j5 <= 90.0
+    assert -1.0 <= j5 <= 1.0
+    assert -1.0 <= j6 <= 1.0
+
+
+def test_capture_reanchors():
+    R = rot_from_euler(0, 0, 0)
+    wt = WristTracker(R=R)
+    ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
+    wt.capture(ref, np.zeros(3), 0.0, 0.0)
+    # 重锚定: 手参考+臂锚点一起更新 → 该手位/该臂位下误差为 0 → 全速 0
+    hand2 = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
+    ee2 = np.array([30.0, 0.0, 0.0])
+    wt.capture(hand2, ee2, 0.0, 0.0)
+    vx, vy, vz, j5, j6 = wt.update(hand2, ee2, 0.0, 0.0)
+    assert vx == 0.0 and vy == 0.0 and vz == 0.0
 
 
 # ── build_palm_pts: HandResult 归一化 landmarks → 像素反投影 ──
