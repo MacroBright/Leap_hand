@@ -47,6 +47,20 @@ class ArmClient:
         self.ee_available = False    # 一次超时即判定不支持, 之后立即返回
         return None
 
+    def get_wrist(self):
+        """读取仿真腕心世界坐标 (m). J4/J5/J6 旋转不移动腕心, 位置环反馈用."""
+        if not self.ee_available:
+            return None
+        self._ser.write(b"get_wrist\n")
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            line = self._ser.readline().decode("ascii", errors="replace").strip()
+            if line.startswith("WRIST:"):
+                vals = [float(v) for v in line[6:].split(",")]
+                return vals[:3] if len(vals) >= 3 else None
+        self.ee_available = False
+        return None
+
     def remote_enable(self) -> None:
         self._ser.write(b"remote_enable\n")
 

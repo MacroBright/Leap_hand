@@ -54,7 +54,7 @@ _CALIB_STEP_HINTS = [
 _DIR_CODE_HINT = "方向码: 1=+X 2=-X 3=+Y 4=-Y 5=+Z(上) 6=-Z(下)"
 
 # 软复位目标: 各关节初始位 J1..J6 (与仿真 INIT_POSE_DEG 一致)
-INIT_POSE_DEG = [90.0, 45.0, 67.0, -157.0, 0.0, 5.0]
+INIT_POSE_DEG = [90.0, 45.0, 90.0, 180.0, 0.0, 0.0]
 
 
 def main():
@@ -120,12 +120,14 @@ def main():
             hand = hands[0] if hands else None
             pts = build_palm_pts(hand, depth, K) if hand is not None else None
 
-            # 读末端+关节反馈 (仿真 get_ee 米→mm; 无 arm 时用零)
+            # 读末端+关节反馈 (仿真 get_wrist 腕心米→mm, 回退 get_ee; 无 arm 时用零)
             # angles[5]=J6 反馈不再使用, 但 STATE 数组照读 (兼容)
             ee_mm = None
             j4c = j5c = 0.0
             if arm is not None:
-                ee = arm.get_ee()
+                ee = arm.get_wrist()
+                if ee is None:
+                    ee = arm.get_ee()
                 if ee is not None:
                     ee_mm = np.array(ee) * 1000.0
                 angles, _, _ = arm.get_state()
@@ -216,7 +218,9 @@ def main():
             if reset_hold > 0:
                 reset_hold -= 1
                 if reset_hold == 0:
-                    ee = arm.get_ee()
+                    ee = arm.get_wrist()
+                    if ee is None:
+                        ee = arm.get_ee()
                     angles, _, _ = arm.get_state()
                     ee_mm = np.array(ee) * 1000.0 if ee else None
                     j5c = angles[4] if len(angles) >= 6 else 0.0

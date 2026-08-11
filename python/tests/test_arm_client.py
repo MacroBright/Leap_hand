@@ -99,3 +99,21 @@ def test_get_ee_parse():
     assert ee == [0.5, 0.1, 0.3]
     c.close()
     s.close()
+
+
+def test_get_wrist_parse():
+    from gesture_mapping.arm_client import ArmClient
+    import serial as _s
+    s = _s.serial_for_url("loop://", baudrate=115200, timeout=0.1)
+    c = ArmClient("loop://", ser=s)
+
+    def feed():
+        time.sleep(0.05)
+        s.write(b"WRIST:0.30,0.05,0.40\n")
+
+    t = threading.Thread(target=feed, daemon=True)
+    t.start()
+    wrist = c.get_wrist()
+    assert wrist == [0.3, 0.05, 0.4]
+    c.close()
+    s.close()
