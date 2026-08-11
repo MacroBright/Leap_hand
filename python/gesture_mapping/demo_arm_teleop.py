@@ -53,6 +53,9 @@ _CALIB_STEP_HINTS = [
 ]
 _DIR_CODE_HINT = "方向码: 1=+X 2=-X 3=+Y 4=-Y 5=+Z(上) 6=-Z(下)"
 
+# 软复位目标: 各关节初始位 J1..J6 (与仿真 INIT_POSE_DEG 一致)
+INIT_POSE_DEG = [90.0, 45.0, 67.0, -157.0, 0.0, 5.0]
+
 
 def main():
     ap = argparse.ArgumentParser(description="机械臂视觉遥操 (位置跟随)")
@@ -220,6 +223,11 @@ def main():
                     j4c = angles[3] if len(angles) >= 6 else 0.0
                     wt.capture(pts, ee_mm, j5c, j4c)
                     print("[复位] 完成, 已重新锚定")
+                    if len(angles) >= 6:
+                        dev = max(abs(a - init) for a, init in zip(angles, INIT_POSE_DEG))
+                        if dev > 20.0:
+                            print("[复位] 可能未生效 (固件可能不支持 soft_reset, "
+                                  f"当前角度未接近初始位, 最大偏差 {dev:.0f}°)")
                 cmd = wt.no_hand()
             elif pts is None:
                 cmd = wt.update(None, ee_mm, j5c, j4c)

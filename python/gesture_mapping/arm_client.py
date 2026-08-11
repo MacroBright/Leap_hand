@@ -17,6 +17,7 @@ class ArmClient:
             port, baudrate=baudrate, timeout=0.05, write_timeout=0.1)
         time.sleep(0.3)
         self._ser.reset_input_buffer()
+        self.ee_available = True   # 真机固件无 get_ee, 首次超时后置 False 不再轮询
 
     # ── 命令 ──────────────────────────────────────────────
 
@@ -33,7 +34,9 @@ class ArmClient:
         return [], [], []
 
     def get_ee(self):
-        """读取仿真末端世界坐标 (m). 真机固件无此命令 → 返回 None."""
+        """读取仿真末端世界坐标 (m). 真机固件无此命令 → 返回 None 并缓存."""
+        if not self.ee_available:
+            return None
         self._ser.write(b"get_ee\n")
         deadline = time.monotonic() + 0.5
         while time.monotonic() < deadline:
@@ -41,6 +44,7 @@ class ArmClient:
             if line.startswith("EE:"):
                 vals = [float(v) for v in line[3:].split(",")]
                 return vals[:3] if len(vals) >= 3 else None
+        self.ee_available = False    # 一次超时即判定不支持, 之后立即返回
         return None
 
     def remote_enable(self) -> None:
