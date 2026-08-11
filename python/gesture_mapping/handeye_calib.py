@@ -50,3 +50,23 @@ def save_calib(path: _Path, R: np.ndarray) -> None:
 def load_calib(path: _Path) -> np.ndarray:
     data = json.loads(Path(path).read_text())
     return np.array(data["R"])
+
+
+# 基座方向码: 1=+X 2=-X 3=+Y 4=-Y 5=+Z(上) 6=-Z(下)
+_BASE_DIR_CODES = {
+    1: np.array([1.0, 0.0, 0.0]), 2: np.array([-1.0, 0.0, 0.0]),
+    3: np.array([0.0, 1.0, 0.0]), 4: np.array([0.0, -1.0, 0.0]),
+    5: np.array([0.0, 0.0, 1.0]), 6: np.array([0.0, 0.0, -1.0]),
+}
+
+
+def solve_handeye(cam_dirs, base_codes):
+    """从 (相机系单位方向, 基座方向码) 配对解手眼旋转 R。
+
+    cam_dirs: (N,3) 相机系单位方向（操作者沿某方向挥手的位移方向）
+    base_codes: 长度 N 的 int 列表，操作者指定"臂应去"的基座方向码(1-6)
+    返回 R(3,3) 使 R @ cam_dir_i ≈ base_dir(base_codes[i])。
+    """
+    src = np.asarray(cam_dirs, float)
+    dst = np.array([_BASE_DIR_CODES[c] for c in base_codes], float)
+    return procrustes_rotation(src, dst)

@@ -125,7 +125,7 @@ class WristTracker:
     """
 
     def __init__(self, R: np.ndarray,
-                 gain_pos: float = 0.001,          # 1/mm (50mm→0.04)
+                 gain_pos: float = 0.008,          # 1/mm (±130mm→满速; (150-15)死区×0.008≈1.0)
                  gain_pitch: float = 0.02,         # 1/deg (50°→0.8)
                  gain_roll: float = 0.02,          # 1/deg
                  deadzone_pos_mm: float = 15.0,
@@ -134,7 +134,8 @@ class WristTracker:
                  j6_rate_deg_s: float = 180.0,
                  j5_range=(0.0, 90.0), j6_range=(0.0, 360.0),
                  dt: float = 1.0 / 30.0,
-                 min_cutoff: float = 1.0, beta: float = 0.02):
+                 min_cutoff: float = 2.0,          # Hz (2.0: 更跟手, 滞后减半)
+                 beta: float = 0.02):
         self.R = np.asarray(R, float)
         self.gain_pos = gain_pos
         self.gain_pitch = gain_pitch
@@ -154,6 +155,7 @@ class WristTracker:
         self.j5_pos_deg = 0.0
         self.j6_pos_deg = 0.0
         self._has_ref = False
+        self.last_delta_base = None   # 最近一次 update() 的基座系 delta (mm); 无手/无参考为 None
 
     # ── 参考 ──────────────────────────────────────────────
 
@@ -178,6 +180,7 @@ class WristTracker:
     def update(self, pts21_cam: Optional[np.ndarray]):
         """返回 (vx,vy,vz,j5_cmd,j6_cmd) ∈ [-1,1]。无手/无参考 → 全 0。"""
         if pts21_cam is None or not self._has_ref:
+            self.last_delta_base = None
             return (0.0, 0.0, 0.0, 0.0, 0.0)
         pts = np.asarray(pts21_cam, float)
 
@@ -186,6 +189,7 @@ class WristTracker:
         wrist = self._pos_filt(wrist)
         ref_w = apply_rotation(self.R, np.array([self._ref_pts[_WRIST]]))[0]
         delta = wrist - ref_w
+        self.last_delta_base = delta
         vx = delta_to_velocity(delta[0], self.gain_pos, self.deadzone_pos_mm)
         vy = delta_to_velocity(delta[1], self.gain_pos, self.deadzone_pos_mm)
         vz = delta_to_velocity(delta[2], self.gain_pos, self.deadzone_pos_mm)
@@ -220,4 +224,5 @@ class WristTracker:
     def no_hand(self):
         """无手帧: 输出全 0 (速度命令清零, 臂保持)。"""
         self._pos_filt.reset()
+        self.last_delta_base = None
         return (0.0, 0.0, 0.0, 0.0, 0.0)

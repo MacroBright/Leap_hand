@@ -38,3 +38,14 @@ def test_save_load_roundtrip(tmp_path):
     p = tmp_path / "calib.json"
     save_calib(p, R)
     np.testing.assert_allclose(load_calib(p), R, atol=1e-9)
+
+
+def test_solve_handeye_axis_mapping():
+    from gesture_mapping.handeye_calib import solve_handeye
+    # 相机 +X→基座+Z, +Y→基座+X, +Z→基座+Y
+    cam = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], float)
+    codes = [5, 1, 3]
+    R = solve_handeye(cam, codes)
+    np.testing.assert_allclose(R @ np.array([1.0, 0, 0]), [0, 0, 1], atol=1e-9)
+    np.testing.assert_allclose(R @ np.array([0.0, 1, 0]), [1, 0, 0], atol=1e-9)
+    np.testing.assert_allclose(R @ np.array([0.0, 0, 1]), [0, 1, 0], atol=1e-9)
