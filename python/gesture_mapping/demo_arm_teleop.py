@@ -109,13 +109,13 @@ def main():
             key = cv2.waitKey(1) & 0xFF
 
             # 校准帧采集: 记录相机系 wrist 位移缓冲 (未过 R)
-            if calib_step > 0 and pts is not None:
+            if 1 <= calib_step <= 3 and pts is not None:
                 calib_buf.append(pts[0])
                 if len(calib_buf) > CALIB_BUF_MAX:
                     calib_buf.pop(0)
 
             # 校准向导按键 (独立于 _KEYS)
-            if calib_step > 0 and key == ord(" ") and pts is not None and len(calib_buf) >= 5:
+            if 1 <= calib_step <= 3 and key == ord(" ") and pts is not None and len(calib_buf) >= 5:
                 d = calib_buf[-1] - calib_buf[0]
                 if np.linalg.norm(d) < 30.0:
                     print("位移太小, 重试 (沿该方向移动更远距离)")
@@ -133,12 +133,23 @@ def main():
                     save_calib(args.calib, R)
                     wt.R = R
                     wt.capture_reference(None)   # 清旧参考, 避免 R 系混用
-                    print(f"[校准] 完成! R 已保存到 {args.calib}:\n{R}")
-                    calib_step = 0
+                    print(f"[校准] R 已保存到 {args.calib}:\n{R}")
+                    print("CALIB: 验证 Z 方向 - 手向相机移动, 确认臂朝期望方向; 反了按 Z 翻转, 正常按 SPACE 完成")
+                    calib_step = 4
                     calib_buf = []
                 else:
                     calib_step += 1
                     print(_CALIB_STEP_HINTS[calib_step - 1])
+            elif calib_step == 4 and key == ord(" "):
+                calib_step = 0
+                calib_buf = []
+                print("校准完成")
+            elif calib_step == 4 and key in (ord("z"), ord("Z")):
+                R = np.asarray(R, float) @ np.diag([1.0, 1.0, -1.0])
+                save_calib(args.calib, R)
+                wt.R = R
+                wt.capture_reference(None)
+                print("已翻转 Z 方向并保存")
             elif key in _KEYS:
                 action = _KEYS[key]
                 if action == "clutch":
@@ -183,12 +194,17 @@ def main():
             # HUD
             h, w = bgr.shape[:2]
             if calib_step > 0:
-                cv2.putText(bgr,
-                            f"CALIB: step {calib_step} | pending: "
-                            f"{'Y' if calib_pending is not None else 'N'} "
-                            f"| pairs: {len(calib_codes)}/3",
-                            (10, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                            (0, 200, 255), 2)
+                if calib_step == 4:
+                    cv2.putText(bgr, "CALIB: 验证 Z 方向 - 手向相机移动, 反了按 Z 翻转, 正常按 SPACE 完成",
+                                (10, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                                (0, 200, 255), 2)
+                else:
+                    cv2.putText(bgr,
+                                f"CALIB: step {calib_step} | pending: "
+                                f"{'Y' if calib_pending is not None else 'N'} "
+                                f"| pairs: {len(calib_codes)}/3",
+                                (10, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                                (0, 200, 255), 2)
             cv2.putText(bgr, f"CLUTCH:{'ON' if clutch else 'OFF'}",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                         (0, 255, 0) if clutch else (0, 0, 255), 2)
@@ -207,6 +223,12 @@ def main():
                 cv2.putText(bgr, "ANCHOR:not",
                             (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                             (255, 255, 0), 1)
+            if pts is not None:
+                cv2.putText(bgr,
+                            f"depth={pts[0][2]:.0f}mm roll={wt.last_roll_deg:+.1f}deg "
+                            f"pitch={wt.last_pitch_deg:+.1f}deg",
+                            (10, 135), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                            (200, 200, 200), 1)
             cv2.imshow("Arm Teleop", bgr)
     finally:
         if arm is not None:

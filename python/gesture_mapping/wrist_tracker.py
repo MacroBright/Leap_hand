@@ -156,6 +156,8 @@ class WristTracker:
         self.j6_pos_deg = 0.0
         self._has_ref = False
         self.last_delta_base = None   # 最近一次 update() 的基座系 delta (mm); 无手/无参考为 None
+        self.last_pitch_deg = 0.0     # 最近一次 update() 的俯仰/滚转角 (deg); HUD 诊断用
+        self.last_roll_deg = 0.0
 
     # ── 参考 ──────────────────────────────────────────────
 
@@ -181,6 +183,8 @@ class WristTracker:
         """返回 (vx,vy,vz,j5_cmd,j6_cmd) ∈ [-1,1]。无手/无参考 → 全 0。"""
         if pts21_cam is None or not self._has_ref:
             self.last_delta_base = None
+            self.last_pitch_deg = 0.0
+            self.last_roll_deg = 0.0
             return (0.0, 0.0, 0.0, 0.0, 0.0)
         pts = np.asarray(pts21_cam, float)
 
@@ -200,6 +204,8 @@ class WristTracker:
         n_base = apply_rotation(self.R, np.array([n]))[0]
         pitch_deg = math.degrees(pitch_angle(f_base))
         roll_deg = math.degrees(roll_angle(n_base, f_base, self._ref_n, self._ref_f))
+        self.last_pitch_deg = pitch_deg
+        self.last_roll_deg = roll_deg
         ref_pitch = math.degrees(pitch_angle(self._ref_f))
         j5_cmd = delta_to_velocity(pitch_deg - ref_pitch,
                                    self.gain_pitch, self.deadzone_ang_deg)
@@ -225,4 +231,6 @@ class WristTracker:
         """无手帧: 输出全 0 (速度命令清零, 臂保持)。"""
         self._pos_filt.reset()
         self.last_delta_base = None
+        self.last_pitch_deg = 0.0
+        self.last_roll_deg = 0.0
         return (0.0, 0.0, 0.0, 0.0, 0.0)
