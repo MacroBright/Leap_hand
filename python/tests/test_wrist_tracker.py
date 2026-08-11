@@ -3,9 +3,11 @@ import numpy as np
 import pytest
 
 from gesture_mapping.wrist_tracker import (
+    WristTracker,
     backproject, build_palm_pts, delta_to_velocity, median_depth_at,
     palm_basis, pitch_angle, roll_angle,
 )
+from gesture_mapping.handeye_calib import rot_from_euler
 
 
 def test_backproject_center():
@@ -62,3 +64,49 @@ def test_delta_to_velocity_deadzone_saturation():
     v = delta_to_velocity(50.0, gain=0.01, deadzone=10.0)
     assert abs(v - 0.4) < 1e-9      # (50-10)*0.01
     assert delta_to_velocity(1000.0, gain=0.01, deadzone=10.0) == 1.0  # 饱和
+
+
+# ── WristTracker 类 ───────────────────────────────────────
+
+
+def _identity_pts21(hand_pts):
+    pts = np.zeros((21, 3))
+    pts[0] = hand_pts[0]       # wrist
+    pts[5] = hand_pts[1]       # index_mcp
+    pts[9] = hand_pts[2]       # middle_mcp
+    pts[17] = hand_pts[3]      # pinky_mcp
+    return pts
+
+
+def test_no_hand_zeroes():
+    wt = WristTracker(R=rot_from_euler(0, 0, 0))
+    assert wt.update(None) == (0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+def test_delta_drives_velocity():
+    R = rot_from_euler(0, 0, 0)
+    wt = WristTracker(R=R, gain_pos=0.001, deadzone_pos_mm=10.0)
+    ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
+    wt.capture_reference(ref)
+    # 手沿 +x 移动 50mm (wrist 移到 (50,0,1000))
+    now = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
+    vx, vy, vz, j5, j6 = wt.update(now)
+    assert vx > 0.03                     # (50-10)*0.001 = 0.04
+    assert vy == 0.0 and vz == 0.0
+    assert j5 == 0.0 and j6 == 0.0
+
+
+def test_j5j6_clamped_to_ranges():
+    wt = WristTracker(R=rot_from_euler(0, 0, 0),
+                      gain_pitch=1.0, gain_roll=1.0,
+                      deadzone_ang_deg=0.0,
+                      j5_rate_deg_s=10.0, j6_rate_deg_s=10.0,
+                      dt=1.0)
+    ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
+    wt.capture_reference(ref)
+    # 把 f 一直向上顶 → j5 应饱和在 j5_range 上限 (默认 90)
+    for _ in range(50):
+        now = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1050], [8, 0, 995]])
+        wt.update(now)
+    assert wt.j5_pos_deg >= 89.0
+    assert wt.j6_pos_deg == 0.0

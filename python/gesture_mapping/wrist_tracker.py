@@ -8,6 +8,9 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from gesture_mapping.filter import OneEuroFilter
+from gesture_mapping.handeye_calib import apply_rotation
+
 # MediaPipe 21 点索引
 _WRIST = 0
 _MCP_INDEX = 5
@@ -107,3 +110,110 @@ def delta_to_velocity(delta: float, gain: float, deadzone: float,
         return 0.0
     v = (d - math.copysign(deadzone, d)) * gain
     return float(np.clip(v, -max_vel, max_vel))
+
+
+# ── WristTracker: 动态参考 + 滤波 + 速度生成 + J5/J6 钳制 ──
+
+class WristTracker:
+    """把相机系 3D 手关键点流 → (vx,vy,vz,j5,j6)∈[-1,1] 差分速度。
+
+    用法: capture_reference() 在离合器按下/松开时锚定参考; 之后每次
+    update() 输出相对参考的速度。无手调用 no_hand() 清零。
+    """
+
+    def __init__(self, R: np.ndarray,
+                 gain_pos: float = 0.001,          # 1/mm (50mm→0.04)
+                 gain_pitch: float = 0.02,         # 1/deg (50°→0.8)
+                 gain_roll: float = 0.02,          # 1/deg
+                 deadzone_pos_mm: float = 15.0,
+                 deadzone_ang_deg: float = 5.0,
+                 j5_rate_deg_s: float = 45.0,
+                 j6_rate_deg_s: float = 180.0,
+                 j5_range=(0.0, 90.0), j6_range=(0.0, 360.0),
+                 dt: float = 1.0 / 30.0,
+                 min_cutoff: float = 1.0, beta: float = 0.02):
+        self.R = np.asarray(R, float)
+        self.gain_pos = gain_pos
+        self.gain_pitch = gain_pitch
+        self.gain_roll = gain_roll
+        self.deadzone_pos_mm = deadzone_pos_mm
+        self.deadzone_ang_deg = deadzone_ang_deg
+        self.j5_rate_deg_s = j5_rate_deg_s
+        self.j6_rate_deg_s = j6_rate_deg_s
+        self.j5_range = j5_range
+        self.j6_range = j6_range
+        self.dt = dt
+        # 状态
+        self._ref_pts = None          # 参考 21 点 (相机系 mm)
+        self._ref_f = None
+        self._ref_n = None
+        self._pos_filt = OneEuroFilter(3, min_cutoff=min_cutoff, beta=beta)
+        self.j5_pos_deg = 0.0
+        self.j6_pos_deg = 0.0
+        self._has_ref = False
+
+    # ── 参考 ──────────────────────────────────────────────
+
+    def capture_reference(self, pts21_cam: Optional[np.ndarray]) -> None:
+        if pts21_cam is None:
+            return
+        self._ref_pts = np.asarray(pts21_cam, float)
+        f, n, _ = palm_basis(self._ref_pts)
+        self._ref_f = apply_rotation(self.R, np.array([f]))[0]
+        self._ref_n = apply_rotation(self.R, np.array([n]))[0]
+        self._pos_filt.reset()
+        self._has_ref = True
+
+    def sync_j5j6(self, deg_j5: float, deg_j6: float) -> None:
+        """从 get_state 同步 J5/J6 实际角度 (remote_enable 软复位后调用)."""
+        self.j5_pos_deg = float(np.clip(deg_j5, *self.j5_range))
+        self.j6_pos_deg = float(np.clip(deg_j6, *self.j6_range))
+
+    # ── 主更新 ────────────────────────────────────────────
+
+    def update(self, pts21_cam: Optional[np.ndarray]):
+        """返回 (vx,vy,vz,j5_cmd,j6_cmd) ∈ [-1,1]。无手/无参考 → 全 0。"""
+        if pts21_cam is None or not self._has_ref:
+            return (0.0, 0.0, 0.0, 0.0, 0.0)
+        pts = np.asarray(pts21_cam, float)
+
+        # 位置 delta (基座系) + 平滑
+        wrist = apply_rotation(self.R, np.array([pts[_WRIST]]))[0]
+        wrist = self._pos_filt(wrist)
+        ref_w = apply_rotation(self.R, np.array([self._ref_pts[_WRIST]]))[0]
+        delta = wrist - ref_w
+        vx = delta_to_velocity(delta[0], self.gain_pos, self.deadzone_pos_mm)
+        vy = delta_to_velocity(delta[1], self.gain_pos, self.deadzone_pos_mm)
+        vz = delta_to_velocity(delta[2], self.gain_pos, self.deadzone_pos_mm)
+
+        # 姿态角 delta
+        f, n, _ = palm_basis(pts)
+        f_base = apply_rotation(self.R, np.array([f]))[0]
+        n_base = apply_rotation(self.R, np.array([n]))[0]
+        pitch_deg = math.degrees(pitch_angle(f_base))
+        roll_deg = math.degrees(roll_angle(n_base, f_base, self._ref_n, self._ref_f))
+        ref_pitch = math.degrees(pitch_angle(self._ref_f))
+        j5_cmd = delta_to_velocity(pitch_deg - ref_pitch,
+                                   self.gain_pitch, self.deadzone_ang_deg)
+        j6_cmd = delta_to_velocity(roll_deg, self.gain_roll, self.deadzone_ang_deg)
+
+        # J5/J6 位置跟踪 + 边界钳制 (固件无限位, PC 侧负责)
+        self.j5_pos_deg = float(np.clip(
+            self.j5_pos_deg + j5_cmd * self.j5_rate_deg_s * self.dt,
+            *self.j5_range))
+        self.j6_pos_deg = float(np.clip(
+            self.j6_pos_deg + j6_cmd * self.j6_rate_deg_s * self.dt,
+            *self.j6_range))
+        if (self.j5_pos_deg <= self.j5_range[0] and j5_cmd < 0) or \
+           (self.j5_pos_deg >= self.j5_range[1] and j5_cmd > 0):
+            j5_cmd = 0.0
+        if (self.j6_pos_deg <= self.j6_range[0] and j6_cmd < 0) or \
+           (self.j6_pos_deg >= self.j6_range[1] and j6_cmd > 0):
+            j6_cmd = 0.0
+
+        return (vx, vy, vz, j5_cmd, j6_cmd)
+
+    def no_hand(self):
+        """无手帧: 输出全 0 (速度命令清零, 臂保持)。"""
+        self._pos_filt.reset()
+        return (0.0, 0.0, 0.0, 0.0, 0.0)
