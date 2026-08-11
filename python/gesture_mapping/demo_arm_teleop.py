@@ -11,6 +11,7 @@
 按键:
   H (按住)   离合器: 按住跟随, 松开=锚定新参考 (走哪停哪)
   C          重载 handeye_calib.json
+  K          轴对齐校准向导 (手沿3方向挥动+选1-6方向码, 自动求解手眼R并保存)
   Y          e_stop
   Q/ESC      退出
 """
@@ -126,6 +127,7 @@ def main():
                 calib_cam.append(calib_pending)
                 calib_codes.append(code)
                 calib_pending = None
+                calib_buf = []      # 步骤间清空, 下步 SPACE 只采当前方向位移
                 if len(calib_codes) == 3:
                     R = solve_handeye(calib_cam, calib_codes)
                     save_calib(args.calib, R)

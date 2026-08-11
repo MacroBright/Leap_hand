@@ -125,7 +125,7 @@ class WristTracker:
     """
 
     def __init__(self, R: np.ndarray,
-                 gain_pos: float = 0.008,          # 1/mm (±130mm→满速; (150-15)死区×0.008≈1.0)
+                 gain_pos: float = 0.008,          # 1/mm (±140mm→满速)
                  gain_pitch: float = 0.02,         # 1/deg (50°→0.8)
                  gain_roll: float = 0.02,          # 1/deg
                  deadzone_pos_mm: float = 15.0,
