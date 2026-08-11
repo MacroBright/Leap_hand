@@ -15,20 +15,49 @@ def test_remote_event_format():
     import serial as _s
     s = _s.serial_for_url("loop://", baudrate=115200, timeout=0.1)
     c = ArmClient("loop://", ser=s)
-    c.remote_event(vx=0.7, vy=-0.3, vz=0.5, j5=0.4, j6=-0.9)
+    c.remote_event(vx=0.7, vy=-0.3, vz=0.5, j5=0.4, j6=-0.9, j4=0.6)
     time.sleep(0.05)
     line = s.readline().decode().strip()
-    # 期望 p0=-0.700 p1=-0.300 p2=-0.900 p3=-0.400 p4=0.500 p5=-0.500
+    # 期望 p0=-0.700 p1=-0.300 p2=-0.900 p3=-0.400 p4=0.500 p5=-0.500 p6=0.600
     parts = line.split()
     assert parts[0] == "remote_event"
-    vals = [float(v) for v in parts[1:7]]
-    assert len(vals) == 6
+    vals = [float(v) for v in parts[1:8]]
+    assert len(vals) == 7
     assert abs(vals[0] - (-0.7)) < 1e-3   # p0=-vx
     assert abs(vals[1] - (-0.3)) < 1e-3   # p1=vy
     assert abs(vals[2] - (-0.9)) < 1e-3   # p2=j6
     assert abs(vals[3] - (-0.4)) < 1e-3   # p3=-j5
     assert abs(vals[4] - 0.5) < 1e-3      # p4=vz
     assert abs(vals[5] - (-0.5)) < 1e-3   # p5=-vz
+    assert abs(vals[6] - 0.6) < 1e-3      # p6=j4
+    c.close()
+    s.close()
+
+
+def test_remote_event_j4_defaults_zero():
+    from gesture_mapping.arm_client import ArmClient
+    import serial as _s
+    s = _s.serial_for_url("loop://", baudrate=115200, timeout=0.1)
+    c = ArmClient("loop://", ser=s)
+    c.remote_event(vx=0.0, vy=0.0, vz=0.0, j5=0.0)   # j6/j4 走默认 0
+    time.sleep(0.05)
+    line = s.readline().decode().strip()
+    vals = [float(v) for v in line.split()[1:8]]
+    assert len(vals) == 7
+    assert vals[6] == 0.0   # p6=j4=0.0
+    c.close()
+    s.close()
+
+
+def test_soft_reset():
+    from gesture_mapping.arm_client import ArmClient
+    import serial as _s
+    s = _s.serial_for_url("loop://", baudrate=115200, timeout=0.1)
+    c = ArmClient("loop://", ser=s)
+    c.soft_reset()
+    time.sleep(0.05)
+    line = s.readline().decode().strip()
+    assert line == "soft_reset"
     c.close()
     s.close()
 

@@ -90,7 +90,7 @@ def test_position_loop_drives_velocity():
     wt.capture(ref, np.zeros(3), 0.0, 0.0)
     # 手沿 +x 移 50mm → 目标 (50,0,0)mm; ee 还在原点 → error 50mm
     now = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
-    vx, vy, vz, j5, j6 = wt.update(now, np.zeros(3), 0.0, 0.0)
+    vx, vy, vz, j4, j5 = wt.update(now, np.zeros(3), 0.0, 0.0)
     assert vx > 0.03                     # (50-8)*0.01 = 0.42
     assert vy == 0.0 and vz == 0.0
 
@@ -102,7 +102,7 @@ def test_position_loop_closes_error():
     wt.capture(ref, np.zeros(3), 0.0, 0.0)
     # 手 +50mm, 但 ee 已到 (45,0,0)mm → 剩 5mm < 死区 8mm → 停
     now = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
-    vx, vy, vz, j5, j6 = wt.update(now, np.array([45.0, 0.0, 0.0]), 0.0, 0.0)
+    vx, vy, vz, j4, j5 = wt.update(now, np.array([45.0, 0.0, 0.0]), 0.0, 0.0)
     assert vx == 0.0
     assert vy == 0.0 and vz == 0.0
 
@@ -112,12 +112,39 @@ def test_j5_target_clamped():
     wt = WristTracker(R=R)
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
     wt.capture(ref, np.zeros(3), 0.0, 0.0)
-    # 手一直"向上" (f 的 z 分量大) → j5 目标应钳制 ≤90°, j5/j6 命令有界
+    # 手一直"向上" (f 的 z 分量大) → j5 目标应钳制 ≤90°, 命令有界
     up = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1050], [8, 0, 995]])
-    vx, vy, vz, j5, j6 = wt.update(up, np.zeros(3), 0.0, 0.0)
+    vx, vy, vz, j4, j5 = wt.update(up, np.zeros(3), 0.0, 0.0)
     assert wt.last_target_j5 <= 90.0
+    assert -1.0 <= j4 <= 1.0
     assert -1.0 <= j5 <= 1.0
-    assert -1.0 <= j6 <= 1.0
+
+
+def test_j4_roll_drives_j4():
+    # 手绕 f 轴滚转 (旋前) → 滚转>0 → J4 目标/命令 > 0 (J5 不受影响)
+    R = rot_from_euler(0, 0, 0)
+    wt = WristTracker(R=R)
+    ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
+    wt.capture(ref, np.zeros(3), 0.0, 0.0)
+    rolled = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [10, 1, 1005]])
+    vx, vy, vz, j4, j5 = wt.update(rolled, np.zeros(3), 0.0, 0.0)
+    assert wt.last_roll_deg > 30.0
+    assert wt.last_target_j4 > 0.0
+    assert j4 > 0.0
+    assert j5 == 0.0
+
+
+def test_j4_target_clamped():
+    # 锚点 j4=170° + 滚转 +90° → target_j4 应钳制在 +180 内
+    R = rot_from_euler(0, 0, 0)
+    wt = WristTracker(R=R)
+    ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
+    wt.capture(ref, np.zeros(3), 0.0, 170.0)   # 4th arg = j4 锚点
+    rolled = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [10, 1, 1005]])
+    vx, vy, vz, j4, j5 = wt.update(rolled, np.zeros(3), 0.0, 170.0)   # 4th arg = j4 反馈
+    assert wt.last_target_j4 > 90.0
+    assert wt.last_target_j4 <= 180.0
+    assert -1.0 <= j4 <= 1.0
 
 
 def test_capture_reanchors():
@@ -129,7 +156,7 @@ def test_capture_reanchors():
     hand2 = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
     ee2 = np.array([30.0, 0.0, 0.0])
     wt.capture(hand2, ee2, 0.0, 0.0)
-    vx, vy, vz, j5, j6 = wt.update(hand2, ee2, 0.0, 0.0)
+    vx, vy, vz, j4, j5 = wt.update(hand2, ee2, 0.0, 0.0)
     assert vx == 0.0 and vy == 0.0 and vz == 0.0
 
 

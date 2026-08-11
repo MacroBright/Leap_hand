@@ -1,8 +1,8 @@
 """机械臂串口薄客户端（真机串口 / socket:// 仿真）。
 
 仅实现视觉遥操所需命令，命令语义与固件一致：
-  remote_event p0 p1 p2 p3 p4 p5
-    vx=-p0, vy=p1, vz=(p4-p5)/2, rx=-p3(J5), ry=p2(J6)
+  remote_event p0 p1 p2 p3 p4 p5 [p6]
+    vx=-p0, vy=p1, vz=(p4-p5)/2, rx=-p3(J5), ry=p2(J6), p6→J4(仿真扩展)
 本模块与 Arm-robot_VLA 的 serial_protocol.py 解耦（避免跨仓库运行时依赖）。
 """
 import time
@@ -53,12 +53,16 @@ class ArmClient:
         self._ser.write(b"e_stop\n")
 
     def remote_event(self, vx: float, vy: float, vz: float,
-                     j5: float, j6: float) -> None:
-        """发送差分速度命令。各输入 ∈ [-1,1]（vx/vy/vz 基座系线速度, j5/j6 关节速度）。"""
-        p0, p1, p2, p3, p4, p5 = -vx, vy, j6, -j5, vz, -vz
+                     j5: float, j6: float = 0.0, j4: float = 0.0) -> None:
+        """发送差分速度命令. 各输入∈[-1,1]. p6→J4 为仿真扩展通道."""
+        p0, p1, p2, p3, p4, p5, p6 = -vx, vy, j6, -j5, vz, -vz, j4
         cmd = (f"remote_event {p0:.3f} {p1:.3f} {p2:.3f} "
-               f"{p3:.3f} {p4:.3f} {p5:.3f}\n")
+               f"{p3:.3f} {p4:.3f} {p5:.3f} {p6:.3f}\n")
         self._ser.write(cmd.encode())
+
+    def soft_reset(self) -> None:
+        """软复位: 全部关节回预设初始角度."""
+        self._ser.write(b"soft_reset\n")
 
     def close(self) -> None:
         try:

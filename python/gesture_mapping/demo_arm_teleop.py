@@ -10,10 +10,12 @@
 
 控制范式: 位置跟随 (手位移 → 目标末端位置 → P 位置环 → 速度命令).
 按住 H 时手位移决定目标; 松开 H 重新锚定 (走哪停哪).
+姿态: 手滚转 → J4 主旋转, 手俯仰 → J5 (J6 不手控).
 仿真臂经 get_ee 读末端反馈 (米→mm); 真机固件无 get_ee 时位置环退回差分模式.
 
 按键:
   H (按住)   离合器: 按住跟随, 松开=重锚定 (走哪停哪)
+  R          复位: 全部关节回初始位, 等待归位后重新锚定
   C          重载 handeye_calib.json
   K          轴对齐校准向导 (手沿3方向挥动+选1-6方向码, 自动求解手眼R并保存)
   Y          e_stop
@@ -37,6 +39,7 @@ from gesture_mapping.wrist_tracker import WristTracker, build_palm_pts
 
 _KEYS = {
     ord("h"): "clutch", ord("H"): "clutch",
+    ord("r"): "reset", ord("R"): "reset",
     ord("c"): "calib", ord("C"): "calib",
     ord("k"): "calib", ord("K"): "calib",
     ord("y"): "estop", ord("Y"): "estop",
@@ -82,13 +85,14 @@ def main():
         try:
             angles, _, _ = arm.get_state()
             if len(angles) >= 6:
-                wt.capture(None, None, angles[4], angles[5])   # 锚定 J5/J6
+                wt.capture(None, None, angles[4], angles[3])   # 锚定 J5/J4 (J6 不手控)
         except Exception:
             pass
         print(f"[臂] 已连接 {args.port}, J5anchor={wt.last_target_j5:.0f}° "
-              f"J6anchor={wt.last_target_j6:.0f}°")
+              f"J4anchor={wt.last_target_j4:.0f}°")
 
     clutch = False
+    reset_hold = 0        # 复位等待帧计数 (~5s @30fps)
 
     # 校准状态机 (K 进入轴对齐向导)
     calib_step = 0            # 0=off, 1/2/3=收集第几步
@@ -98,7 +102,7 @@ def main():
     calib_pending = None      # 待选方向的 cam 单位向量
     CALIB_BUF_MAX = 20
 
-    print("\n按键: H=离合器(按住跟随,松开重锚定)  C=重载标定  K=轴对齐校准向导  Y=急停  Q=退出\n")
+    print("\n按键: H=离合器(按住跟随,松开重锚定)  R=复位  C=重载标定  K=轴对齐校准向导  Y=急停  Q=退出\n")
     print("[控制范式] 位置跟随遥操: 按住H后, 手相对锚点的位移 → 末端目标位置, "
           "位置环将臂驱动到目标 (误差随臂接近而趋零, 回手锚点即停); "
           "松开H重锚定当前手位+臂位, 走哪停哪. "
@@ -114,15 +118,16 @@ def main():
             pts = build_palm_pts(hand, depth, K) if hand is not None else None
 
             # 读末端+关节反馈 (仿真 get_ee 米→mm; 无 arm 时用零)
+            # angles[5]=J6 反馈不再使用, 但 STATE 数组照读 (兼容)
             ee_mm = None
-            j5c = j6c = 0.0
+            j4c = j5c = 0.0
             if arm is not None:
                 ee = arm.get_ee()
                 if ee is not None:
                     ee_mm = np.array(ee) * 1000.0
                 angles, _, _ = arm.get_state()
                 if len(angles) >= 6:
-                    j5c, j6c = angles[4], angles[5]
+                    j4c, j5c = angles[3], angles[4]
 
             key = cv2.waitKey(1) & 0xFF
 
@@ -172,7 +177,7 @@ def main():
                 action = _KEYS[key]
                 if action == "clutch":
                     clutch = not clutch
-                    wt.capture(pts, ee_mm, j5c, j6c)   # 按下/松开都重锚定(手参考+臂锚点)
+                    wt.capture(pts, ee_mm, j5c, j4c)   # 按下/松开都重锚定(手参考+臂锚点)
                 elif action == "calib" and key in (ord("k"), ord("K")):
                     if calib_step == 0:
                         calib_step = 1
@@ -195,20 +200,39 @@ def main():
                 elif action == "estop" and arm is not None:
                     arm.e_stop()
                     print("[急停] e_stop")
+                elif action == "reset":
+                    if arm is not None:
+                        arm.soft_reset()
+                        reset_hold = 150    # ~5s @30fps, 让仿真归位
+                        print("[复位] 机械臂回初始位, 等待归位...")
+                    else:
+                        print("[复位] 无臂连接 (--no-drive), 忽略")
                 elif action == "quit":
                     break
 
-            if pts is None:
-                cmd = wt.update(None, ee_mm, j5c, j6c)
+            if reset_hold > 0:
+                reset_hold -= 1
+                if reset_hold == 0:
+                    ee = arm.get_ee()
+                    angles, _, _ = arm.get_state()
+                    ee_mm = np.array(ee) * 1000.0 if ee else None
+                    j5c = angles[4] if len(angles) >= 6 else 0.0
+                    j4c = angles[3] if len(angles) >= 6 else 0.0
+                    wt.capture(pts, ee_mm, j5c, j4c)
+                    print("[复位] 完成, 已重新锚定")
+                cmd = wt.no_hand()
+            elif pts is None:
+                cmd = wt.update(None, ee_mm, j5c, j4c)
             elif clutch:
-                cmd = wt.update(pts, ee_mm, j5c, j6c)
+                cmd = wt.update(pts, ee_mm, j5c, j4c)
             else:
                 cmd = wt.no_hand()
-                wt.capture(pts, ee_mm, j5c, j6c)   # 未按住时也持续重锚定(手参考+臂锚点)
+                wt.capture(pts, ee_mm, j5c, j4c)   # 未按住时也持续重锚定(手参考+臂锚点)
 
             cmd = cmd_smoother(np.array(cmd))
             if arm is not None:
-                arm.remote_event(*cmd)
+                vx, vy, vz, j4, j5 = cmd
+                arm.remote_event(vx, vy, vz, j5=j5, j4=j4)
 
             # HUD
             h, w = bgr.shape[:2]
@@ -228,9 +252,9 @@ def main():
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                         (0, 255, 0) if clutch else (0, 0, 255), 2)
             cv2.putText(bgr, f"v=({cmd[0]:+.2f},{cmd[1]:+.2f},{cmd[2]:+.2f}) "
-                             f"J5={cmd[3]:+.2f} J6={cmd[4]:+.2f}",
+                             f"J4={cmd[3]:+.2f} J5={cmd[4]:+.2f}",
                         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-            cv2.putText(bgr, f"J5tgt={wt.last_target_j5:5.1f}° J6tgt={wt.last_target_j6:5.1f}°",
+            cv2.putText(bgr, f"J4tgt={wt.last_target_j4:5.1f}° J5tgt={wt.last_target_j5:5.1f}°",
                         (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
             d = wt.last_delta_base
             cv2.putText(bgr, f"d=({d[0]:+.1f},{d[1]:+.1f},{d[2]:+.1f})mm ANCHOR:set",
