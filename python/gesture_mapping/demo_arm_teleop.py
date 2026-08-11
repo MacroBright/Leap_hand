@@ -81,7 +81,7 @@ def main():
         print("[标定] 未找到 handeye_calib.json, 使用单位旋转 (仅测试)")
 
     wt = WristTracker(R=R)
-    cmd_smoother = OneEuroFilter(5, min_cutoff=5.0, beta=0.05)
+    cmd_smoother = OneEuroFilter(5, min_cutoff=8.0, beta=0.08)
     arm = None if args.no_drive else ArmClient(args.port)
     if arm is not None:
         arm.remote_enable()
@@ -226,8 +226,7 @@ def main():
                     if len(angles) >= 6:
                         dev = max(abs(a - init) for a, init in zip(angles, INIT_POSE_DEG))
                         if dev > 20.0:
-                            print("[复位] 可能未生效 (固件可能不支持 soft_reset, "
-                                  f"当前角度未接近初始位, 最大偏差 {dev:.0f}°)")
+                            print(f"[复位] 警告: 臂未归到初始位 (最大偏差 {dev:.0f}°)")
                 cmd = wt.no_hand()
             elif pts is None:
                 cmd = wt.update(None, ee_mm, j5c, j4c)

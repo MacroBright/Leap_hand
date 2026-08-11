@@ -16,6 +16,7 @@ from gesture_mapping.handeye_calib import apply_rotation
 _WRIST = 0
 _MCP_INDEX = 5
 _MCP_MIDDLE = 9
+_MCP_MIDDLE_TIP = 12
 _MCP_PINKY = 17
 
 K = Tuple[float, float, float, float]  # (fx, fy, cx, cy)
@@ -58,7 +59,7 @@ def build_palm_pts(hand, depth: Optional[np.ndarray],
     h, w = depth.shape
     lm = hand.landmarks
     pts = np.zeros((21, 3))
-    for i in (_WRIST, _MCP_INDEX, _MCP_MIDDLE, _MCP_PINKY):
+    for i in (_WRIST, _MCP_INDEX, _MCP_MIDDLE, _MCP_MIDDLE_TIP, _MCP_PINKY):
         u = lm[i].x * w
         v = lm[i].y * h
         if not (0 <= u < w and 0 <= v < h):
@@ -129,13 +130,13 @@ class WristTracker:
     def __init__(self, R: np.ndarray,
                  scale_pos: float = 1.0,          # 手位移mm → 末端目标mm
                  scale_ang: float = 1.0,          # 手滚转/俯仰deg → J4/J5目标deg
-                 k_pos: float = 0.01,             # 位置环增益 (1/mm): 100mm误差→~0.9满速
+                 k_pos: float = 0.02,             # 位置环增益 (1/mm): 50mm误差→~0.9满速
                  k_ang: float = 0.02,             # 角度环增益 (1/deg): 50°误差→~0.9满速
-                 deadzone_pos_mm: float = 8.0,    # 位置死区 (防末端抖动)
+                 deadzone_pos_mm: float = 5.0,    # 位置死区 (防末端抖动)
                  deadzone_ang_deg: float = 3.0,   # 角度死区
                  j5_range=(0.0, 90.0), j4_range=(-180.0, 180.0),   # J5/J4 目标钳制范围
                  dt: float = 1.0 / 30.0,
-                 min_cutoff: float = 2.0, beta: float = 0.02):
+                 min_cutoff: float = 4.0, beta: float = 0.02):
         self.R = np.asarray(R, float)
         self.scale_pos, self.scale_ang = scale_pos, scale_ang
         self.k_pos, self.k_ang = k_pos, k_ang
@@ -145,6 +146,7 @@ class WristTracker:
         # 手参考 + 臂锚点
         self._ref_pts = None
         self._ref_f = self._ref_n = None
+        self._ref_f_hand = None   # J5 俯仰参考: wrist→中指尖 基座系单位方向
         self._has_ref = False
         self._pos_filt = OneEuroFilter(3, min_cutoff=min_cutoff, beta=beta)
         self._anchor_ee = np.zeros(3)     # 基座系 mm
@@ -168,6 +170,10 @@ class WristTracker:
             f, n, _ = palm_basis(self._ref_pts)
             self._ref_f = apply_rotation(self.R, np.array([f]))[0]
             self._ref_n = apply_rotation(self.R, np.array([n]))[0]
+            # J5 俯仰参考: wrist→中指尖方向 (杠杆长, 对弯曲灵敏)
+            f_hand = self._ref_pts[_MCP_MIDDLE_TIP] - self._ref_pts[_WRIST]
+            f_hand = f_hand / (np.linalg.norm(f_hand) + 1e-9)
+            self._ref_f_hand = apply_rotation(self.R, np.array([f_hand]))[0]
             self._pos_filt.reset()
             self._has_ref = True
         else:
@@ -223,10 +229,14 @@ class WristTracker:
         f, n, _ = palm_basis(pts)
         f_base = apply_rotation(self.R, np.array([f]))[0]
         n_base = apply_rotation(self.R, np.array([n]))[0]
-        pitch_deg = math.degrees(pitch_angle(f_base))
+        # J5 俯仰 (手腕内外翻转): 用 wrist→中指尖方向 (杠杆长, 对弯曲灵敏)
+        f_hand = pts[_MCP_MIDDLE_TIP] - pts[_WRIST]
+        f_hand = f_hand / (np.linalg.norm(f_hand) + 1e-9)
+        f_hand_base = apply_rotation(self.R, np.array([f_hand]))[0]
+        pitch_deg = math.degrees(pitch_angle(f_hand_base))
         roll_deg = math.degrees(roll_angle(n_base, f_base, self._ref_n, self._ref_f))
         self.last_pitch_deg, self.last_roll_deg = pitch_deg, roll_deg
-        ref_pitch = math.degrees(pitch_angle(self._ref_f))
+        ref_pitch = math.degrees(pitch_angle(self._ref_f_hand))
         target_j4 = float(np.clip(self._anchor_j4 + roll_deg * self.scale_ang,
                                   *self.j4_range))
         target_j5 = float(np.clip(self._anchor_j5 + (pitch_deg - ref_pitch) * self.scale_ang,

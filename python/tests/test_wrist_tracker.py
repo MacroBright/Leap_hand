@@ -75,6 +75,8 @@ def _identity_pts21(hand_pts):
     pts[5] = hand_pts[1]       # index_mcp
     pts[9] = hand_pts[2]       # middle_mcp
     pts[17] = hand_pts[3]      # pinky_mcp
+    # middle_tip (index 12) 用于 J5 俯仰; 缺省回退 middle_mcp 保持旧行为
+    pts[12] = hand_pts[4] if len(hand_pts) > 4 else hand_pts[2]
     return pts
 
 
@@ -112,8 +114,9 @@ def test_j5_target_clamped():
     wt = WristTracker(R=R)
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
     wt.capture(ref, np.zeros(3), 0.0, 0.0)
-    # 手一直"向上" (f 的 z 分量大) → j5 目标应钳制 ≤90°, 命令有界
-    up = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1050], [8, 0, 995]])
+    # 手一直"向上" (f_hand 的 z 分量大) → j5 目标应钳制 ≤90°, 命令有界
+    up = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1050], [8, 0, 995],
+                          [14, 0, 1100]])   # 中指尖 (index 12) 抬更高 → 俯仰更灵敏
     vx, vy, vz, j4, j5 = wt.update(up, np.zeros(3), 0.0, 0.0)
     assert wt.last_target_j5 <= 90.0
     assert -1.0 <= j4 <= 1.0
@@ -181,11 +184,13 @@ def test_build_palm_pts_backprojects_pixels():
     lms[0] = _FakeLM(320 / w, 240 / h)      # wrist → 中心 → 反投影 (0,0,1000)
     lms[5] = _FakeLM(340 / w, 220 / h)      # index_mcp
     lms[9] = _FakeLM(360 / w, 240 / h)      # middle_mcp
+    lms[12] = _FakeLM(380 / w, 240 / h)     # middle_tip
     lms[17] = _FakeLM(300 / w, 260 / h)     # pinky_mcp
     pts = build_palm_pts(_FakeHand(lms), depth, (500.0, 500.0, 320.0, 240.0))
     assert pts is not None
     np.testing.assert_allclose(pts[0], [0, 0, 1000], atol=1e-6)
     assert np.all(np.isfinite(pts[5])) and np.all(np.isfinite(pts[9]))
+    assert np.all(np.isfinite(pts[12]))
 
 
 def test_build_palm_pts_none_when_hand_missing_depth():
