@@ -159,12 +159,12 @@ class WristTracker:
 
     def __init__(self, R: np.ndarray,
                  scale_pos: float = 1.0,          # 手位移mm → 末端目标mm
-                 k_pos: float = 0.02,             # 位置环增益 (1/mm): 50mm误差→~0.9满速
-                 k_ang: float = 0.05,             # 姿态环增益 (1/deg): 20°误差→~0.9满速 (2026-08-12 调大)
+                 k_pos: float = 0.06,             # 位置环增益 (1/mm): 17mm误差→~0.9满速 (2026-08-12 调大减滞后)
+                 k_ang: float = 0.10,             # 姿态环增益 (1/deg): 10°误差→~0.9满速 (2026-08-12 调大减滞后)
                  deadzone_pos_mm: float = 5.0,    # 位置死区 (防末端抖动)
                  deadzone_ang_deg: float = 2.0,   # 姿态死区 (角度误差忽略下限)
                  dt: float = 1.0 / 30.0,
-                 min_cutoff: float = 4.0, beta: float = 0.02,
+                 min_cutoff: float = 8.0, beta: float = 0.02,
                  j5_range=(0.0, 90.0), j4_range=(-180.0, 180.0)):   # 保留兼容参数 (不再直接用于命令)
         self.R = np.asarray(R, float)
         self.scale_pos = scale_pos
