@@ -199,7 +199,7 @@ def main():
                     R = solve_handeye(calib_cam, calib_codes)
                     save_calib(args.calib, R)
                     wt.R = R
-                    wt.capture(None, None, 0.0, 0.0)   # 清旧参考, 避免 R 系混用
+                    wt.capture(None, None, None, 0.0, 0.0)   # 清旧参考, 避免 R 系混用
                     print(f"[校准] R 已保存到 {args.calib}:\n{R}")
                     print("CALIB: 验证 Z 方向 - 手向相机移动, 确认臂朝期望方向; 反了按 Z 翻转, 正常按 SPACE 完成")
                     calib_step = 4
@@ -215,7 +215,7 @@ def main():
                 R = np.asarray(R, float) @ np.diag([1.0, 1.0, -1.0])
                 save_calib(args.calib, R)
                 wt.R = R
-                wt.capture(None, None, 0.0, 0.0)
+                wt.capture(None, None, None, 0.0, 0.0)
                 print("已翻转 Z 方向并保存")
             # ── 录制复位点模式 (M 进入/退出) ──
             elif record_mode:
@@ -261,7 +261,7 @@ def main():
                 elif action == "calib" and Path(args.calib).exists():
                     R = load_calib(args.calib)
                     wt.R = R
-                    wt.capture(None, None, 0.0, 0.0)   # 清旧参考, 避免 R 系混用
+                    wt.capture(None, None, None, 0.0, 0.0)   # 清旧参考, 避免 R 系混用
                     print("[标定] 已重载 handeye")
                 elif action == "estop" and arm is not None:
                     arm.e_stop()
