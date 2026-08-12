@@ -3,6 +3,8 @@
 仅实现视觉遥操所需命令，命令语义与固件一致：
   remote_event p0 p1 p2 p3 p4 p5 [p6]
     vx=-p0, vy=p1, vz=(p4-p5)/2, rx=-p3(J5), ry=p2(J6), p6→J4(仿真扩展)
+  end_event vx vy vz wx wy wz   (仿真扩展, 末端 6DOF 线+角速度 → 全 DLS IK)
+  get_ee_pose → EEPOSE:xyz+wxyz  (仿真扩展, 末端位姿反馈)
 本模块与 Arm-robot_VLA 的 serial_protocol.py 解耦（避免跨仓库运行时依赖）。
 """
 import time
@@ -60,6 +62,27 @@ class ArmClient:
                 return vals[:3] if len(vals) >= 3 else None
         self.ee_available = False
         return None
+
+    def get_ee_pose(self):
+        """读仿真末端位姿 (m + wxyz四元数). 返回 (pos3, quat4) 或 None."""
+        if not self.ee_available:
+            return None
+        self._ser.write(b"get_ee_pose\n")
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            line = self._ser.readline().decode("ascii", errors="replace").strip()
+            if line.startswith("EEPOSE:"):
+                vals = [float(v) for v in line[7:].split(",")]
+                if len(vals) >= 7:
+                    return vals[:3], vals[3:7]   # (pos m, quat wxyz)
+        self.ee_available = False    # 一次超时即判定不支持, 之后立即返回
+        return None
+
+    def end_event(self, vx, vy, vz, wx, wy, wz) -> None:
+        """末端 6DOF 速度 (仿真扩展): 线速度+角速度 ∈[-1,1]."""
+        cmd = (f"end_event {vx:.3f} {vy:.3f} {vz:.3f} "
+               f"{wx:.3f} {wy:.3f} {wz:.3f}\n")
+        self._ser.write(cmd.encode())
 
     def remote_enable(self) -> None:
         self._ser.write(b"remote_enable\n")

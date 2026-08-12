@@ -1,17 +1,17 @@
-"""机械臂视觉遥操 demo: 人手位置/姿态 → 位置跟随 → remote_event 速度.
+"""机械臂视觉遥操 demo: 人手 6DOF → 末端位姿目标 → 位置/姿态环 → end_event 速度.
 
 用法:
   # 仿真臂 (先另开终端: conda activate smolvla && python scripts/mujoco_sim.py --ik --no-camera)
   conda activate leap_hand && cd python
   python gesture_mapping/demo_arm_teleop.py --port socket://localhost:5555
 
-  # 真机臂
+  # 真机臂 (M3: 需固件支持 get_ee_pose/FK, 当前无反馈 → 不出命令)
   python gesture_mapping/demo_arm_teleop.py --port /dev/ttyUSB0
 
-控制范式: 位置跟随 (手位移 → 目标末端位置 → P 位置环 → 速度命令).
-按住 H 时手位移决定目标; 松开 H 重新锚定 (走哪停哪).
-姿态: 手滚转 → J4 主旋转, 手俯仰 → J5 (J6 不手控).
-仿真臂经 get_ee 读末端反馈 (米→mm); 真机固件无 get_ee 时位置环退回差分模式.
+控制范式: 末端 6DOF 位姿跟随 (方案 C 动态锚点).
+按住 H 时捕获手锚点+末端锚点; 按住期间手位置增量 → 末端位置目标 (位置环→v_lin),
+手姿态增量 → 末端姿态目标 (姿态环→w_ang), 经 end_event vx vy vz wx wy wz 驱动全 IK.
+仿真经 get_ee_pose 读末端位姿 (m+wxyz) 作反馈; 真机无反馈时返回全 0 (不差分降级).
 
 按键:
   H (按住)   离合器: 按住跟随, 松开=重锚定 (走哪停哪)
@@ -82,7 +82,7 @@ def _save_home_pose(angles):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="机械臂视觉遥操 (位置跟随)")
+    ap = argparse.ArgumentParser(description="机械臂视觉遥操 (末端6DOF位姿跟随)")
     ap.add_argument("--port", default="socket://localhost:5555",
                     help="串口或 socket:// (默认仿真 5555)")
     ap.add_argument("--calib", default=str(
@@ -105,18 +105,21 @@ def main():
         print("[标定] 未找到 handeye_calib.json, 使用单位旋转 (仅测试)")
 
     wt = WristTracker(R=R)
-    cmd_smoother = OneEuroFilter(5, min_cutoff=8.0, beta=0.08)
+    cmd_smoother = OneEuroFilter(6, min_cutoff=8.0, beta=0.08)
     arm = None if args.no_drive else ArmClient(args.port)
     if arm is not None:
         arm.remote_enable()
         try:
             angles, _, _ = arm.get_state()
+            ee_pose0 = None
+            ep = arm.get_ee_pose()
+            if ep is not None:
+                ee_pose0 = (np.array(ep[0]) * 1000.0, ep[1])   # 位置米→mm, 四元数不变
             if len(angles) >= 6:
-                wt.capture(None, None, angles[4], angles[3])   # 锚定 J5/J4 (J6 不手控)
+                wt.capture(None, ee_pose0, angles[4], angles[3])
         except Exception:
             pass
-        print(f"[臂] 已连接 {args.port}, J5anchor={wt.last_target_j5:.0f}° "
-              f"J4anchor={wt.last_target_j4:.0f}°")
+        print(f"[臂] 已连接 {args.port}")
 
     clutch = False
     reset_hold = 0        # 复位等待帧计数 (~5s @30fps)
@@ -137,9 +140,9 @@ def main():
     CALIB_BUF_MAX = 20
 
     print("\n按键: H=离合器(按住跟随,松开重锚定)  R=复位  C=重载标定  K=轴对齐校准向导  Y=急停  Q=退出\n")
-    print("[控制范式] 位置跟随遥操: 按住H后, 手相对锚点的位移 → 末端目标位置, "
-          "位置环将臂驱动到目标 (误差随臂接近而趋零, 回手锚点即停); "
-          "松开H重锚定当前手位+臂位, 走哪停哪. "
+    print("[控制范式] 末端6DOF位姿跟随: 按住H后, 手相对锚点的位置/姿态增量 → 末端目标位姿, "
+          "位置环(v_lin)+姿态环(w_ang)将臂末端驱动到目标; "
+          "松开H重锚定当前手位+末端位姿, 走哪停哪. "
           "手在画面中的运动方向经手眼标定R映射到机械臂基座系.\n")
 
     try:
@@ -151,16 +154,13 @@ def main():
             hand = hands[0] if hands else None
             pts = build_palm_pts(hand, depth, K) if hand is not None else None
 
-            # 读末端+关节反馈 (仿真 get_wrist 腕心米→mm, 回退 get_ee; 无 arm 时用零)
-            # angles[5]=J6 反馈不再使用, 但 STATE 数组照读 (兼容)
-            ee_mm = None
+            # 读末端位姿+关节反馈 (仿真 get_ee_pose; 无 arm 时用 None/零)
+            ee_pose = None
             j4c = j5c = 0.0
             if arm is not None:
-                ee = arm.get_wrist()
-                if ee is None:
-                    ee = arm.get_ee()
-                if ee is not None:
-                    ee_mm = np.array(ee) * 1000.0
+                ep = arm.get_ee_pose()
+                if ep is not None:
+                    ee_pose = (np.array(ep[0]) * 1000.0, ep[1])   # 位置米→mm, 四元数不变
                 angles, _, _ = arm.get_state()
                 if len(angles) >= 6:
                     j4c, j5c = angles[3], angles[4]
@@ -235,7 +235,7 @@ def main():
                 action = _KEYS[key]
                 if action == "clutch":
                     clutch = not clutch
-                    wt.capture(pts, ee_mm, j5c, j4c)   # 按下/松开都重锚定(手参考+臂锚点)
+                    wt.capture(pts, ee_pose, j5c, j4c)   # 按下/松开都重锚定(手参考+末端锚点)
                 elif action == "calib" and key in (ord("k"), ord("K")):
                     if calib_step == 0:
                         calib_step = 1
@@ -283,14 +283,12 @@ def main():
             if reset_hold > 0:
                 reset_hold -= 1
                 if reset_hold == 0:
-                    ee = arm.get_wrist()
-                    if ee is None:
-                        ee = arm.get_ee()
+                    ep = arm.get_ee_pose()
                     angles, _, _ = arm.get_state()
-                    ee_mm = np.array(ee) * 1000.0 if ee else None
+                    ee_pose = (np.array(ep[0]) * 1000.0, ep[1]) if ep is not None else None
                     j5c = angles[4] if len(angles) >= 6 else 0.0
                     j4c = angles[3] if len(angles) >= 6 else 0.0
-                    wt.capture(pts, ee_mm, j5c, j4c)
+                    wt.capture(pts, ee_pose, j5c, j4c)
                     print("[复位] 完成, 已重新锚定")
                     if len(angles) >= 6:
                         init_ref = home_pose if home_pose is not None else INIT_POSE_DEG
@@ -299,17 +297,16 @@ def main():
                             print(f"[复位] 警告: 臂未归到初始位 (最大偏差 {dev:.0f}°)")
                 cmd = wt.no_hand()
             elif pts is None:
-                cmd = wt.update(None, ee_mm, j5c, j4c)
+                cmd = wt.update(None, ee_pose, j5c, j4c)
             elif clutch:
-                cmd = wt.update(pts, ee_mm, j5c, j4c)
+                cmd = wt.update(pts, ee_pose, j5c, j4c)
             else:
                 cmd = wt.no_hand()
-                wt.capture(pts, ee_mm, j5c, j4c)   # 未按住时也持续重锚定(手参考+臂锚点)
+                wt.capture(pts, ee_pose, j5c, j4c)   # 未按住时也持续重锚定(手参考+末端锚点)
 
             cmd = cmd_smoother(np.array(cmd))
             if arm is not None:
-                vx, vy, vz, j4, j5 = cmd
-                arm.remote_event(vx, vy, vz, j5=j5, j4=j4)
+                arm.end_event(*cmd)
 
             # HUD
             h, w = bgr.shape[:2]
@@ -335,16 +332,16 @@ def main():
                             (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                             (0, 255, 255), 1)
             cv2.putText(bgr, f"v=({cmd[0]:+.2f},{cmd[1]:+.2f},{cmd[2]:+.2f}) "
-                             f"J4={cmd[3]:+.2f} J5={cmd[4]:+.2f}",
+                             f"W=({cmd[3]:+.2f},{cmd[4]:+.2f},{cmd[5]:+.2f})",
                         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-            cv2.putText(bgr, f"J4tgt={wt.last_target_j4:5.1f}° J5tgt={wt.last_target_j5:5.1f}°",
+            cv2.putText(bgr, f"roll={wt.last_roll_deg:+.1f}deg pitch={wt.last_pitch_deg:+.1f}deg",
                         (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
             d = wt.last_delta_base
             cv2.putText(bgr, f"d=({d[0]:+.1f},{d[1]:+.1f},{d[2]:+.1f})mm ANCHOR:set",
                         (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-            if ee_mm is not None:
+            if ee_pose is not None:
                 t = wt.last_target_ee
-                e = t - ee_mm
+                e = t - ee_pose[0]
                 cv2.putText(bgr, f"tgt=({t[0]:+.0f},{t[1]:+.0f},{t[2]:+.0f})mm "
                                  f"err=({e[0]:+.0f},{e[1]:+.0f},{e[2]:+.0f})mm",
                             (10, 135), cv2.FONT_HERSHEY_SIMPLEX, 0.5,

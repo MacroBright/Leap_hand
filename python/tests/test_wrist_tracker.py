@@ -1,11 +1,13 @@
 """wrist_tracker 纯函数单测。"""
+import math
+
 import numpy as np
 import pytest
 
 from gesture_mapping.wrist_tracker import (
     WristTracker,
     backproject, build_palm_pts, delta_to_velocity, median_depth_at,
-    palm_basis, pitch_angle, roll_angle,
+    palm_basis, pitch_angle, quat_to_rot, roll_angle, rot_error_angvel,
 )
 from gesture_mapping.handeye_calib import rot_from_euler
 
@@ -66,7 +68,7 @@ def test_delta_to_velocity_deadzone_saturation():
     assert delta_to_velocity(1000.0, gain=0.01, deadzone=10.0) == 1.0  # 饱和
 
 
-# ── WristTracker 类 (位置跟随) ─────────────────────────────
+# ── WristTracker 类 (末端 6DOF 位姿跟随) ───────────────────
 
 
 def _identity_pts21(hand_pts):
@@ -75,92 +77,104 @@ def _identity_pts21(hand_pts):
     pts[5] = hand_pts[1]       # index_mcp
     pts[9] = hand_pts[2]       # middle_mcp
     pts[17] = hand_pts[3]      # pinky_mcp
-    # middle_tip (index 12) 用于 J5 俯仰; 缺省回退 middle_mcp 保持旧行为
     pts[12] = hand_pts[4] if len(hand_pts) > 4 else hand_pts[2]
     return pts
 
 
+_IDQ = (1.0, 0.0, 0.0, 0.0)    # 单位四元数
+
+
 def test_no_hand_zeroes():
     wt = WristTracker(R=rot_from_euler(0, 0, 0))
-    assert wt.update(None, np.zeros(3), 0, 0) == (0.0, 0.0, 0.0, 0.0, 0.0)
+    assert wt.update(None, None, 0, 0) == (0.0,) * 6
 
 
-def test_position_loop_drives_velocity():
+def test_position_6dof_drives_vx():
     R = rot_from_euler(0, 0, 0)
-    wt = WristTracker(R=R)                       # k_pos=0.01, deadzone=8mm
+    wt = WristTracker(R=R)                       # k_pos=0.02, deadzone=5mm
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
-    wt.capture(ref, np.zeros(3), 0.0, 0.0)
-    # 手沿 +x 移 50mm → 目标 (50,0,0)mm; ee 还在原点 → error 50mm
+    wt.capture(ref, (np.zeros(3), _IDQ), 0.0, 0.0)
+    # 手沿 +x 移 50mm → 目标 (50,0,0)mm; ee 还在锚点 → error 50mm → vx>0
     now = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
-    vx, vy, vz, j4, j5 = wt.update(now, np.zeros(3), 0.0, 0.0)
-    assert vx > 0.03                     # (50-8)*0.01 = 0.42
-    assert vy == 0.0 and vz == 0.0
+    v = wt.update(now, (np.zeros(3), _IDQ), 0.0, 0.0)
+    assert v[0] > 0.03                     # (50-5)*0.02 = 0.9
+    assert v[1] == 0.0 and v[2] == 0.0
+    assert abs(v[3]) < 1e-9 and abs(v[4]) < 1e-9 and abs(v[5]) < 1e-9   # 姿态不变 → w=0
 
 
 def test_position_loop_closes_error():
     R = rot_from_euler(0, 0, 0)
     wt = WristTracker(R=R)
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
-    wt.capture(ref, np.zeros(3), 0.0, 0.0)
-    # 手 +50mm, 但 ee 已到 (45,0,0)mm → 剩 5mm < 死区 8mm → 停
+    wt.capture(ref, (np.zeros(3), _IDQ), 0.0, 0.0)
+    # 手 +50mm, 但 ee 已到 (45,0,0)mm → 剩 5mm = 死区 5mm → 停
     now = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
-    vx, vy, vz, j4, j5 = wt.update(now, np.array([45.0, 0.0, 0.0]), 0.0, 0.0)
-    assert vx == 0.0
-    assert vy == 0.0 and vz == 0.0
+    v = wt.update(now, (np.array([45.0, 0.0, 0.0]), _IDQ), 0.0, 0.0)
+    assert v[0] == 0.0
+    assert v[1] == 0.0 and v[2] == 0.0
 
 
-def test_j5_target_clamped():
+def test_orientation_delta_drives_w():
+    # 掌法线 n 绕 f(+x) 转 +30° → 末端目标绕 x 转 +30° → wx>0, 位置保持 0
     R = rot_from_euler(0, 0, 0)
     wt = WristTracker(R=R)
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
-    wt.capture(ref, np.zeros(3), 0.0, 0.0)
-    # 手一直"向上" (f_hand 的 z 分量大) → j5 目标应钳制 ≤90°, 命令有界
-    up = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1050], [8, 0, 995],
-                          [14, 0, 1100]])   # 中指尖 (index 12) 抬更高 → 俯仰更灵敏
-    vx, vy, vz, j4, j5 = wt.update(up, np.zeros(3), 0.0, 0.0)
-    assert wt.last_target_j5 <= 90.0
-    assert -1.0 <= j4 <= 1.0
-    assert -1.0 <= j5 <= 1.0
-
-
-def test_j4_roll_drives_j4():
-    # 手绕 f 轴滚转 (旋前) → 滚转>0 → J4 目标/命令 > 0 (J5 不受影响)
-    R = rot_from_euler(0, 0, 0)
-    wt = WristTracker(R=R)
-    ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
-    wt.capture(ref, np.zeros(3), 0.0, 0.0)
-    rolled = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [10, 1, 1005]])
-    vx, vy, vz, j4, j5 = wt.update(rolled, np.zeros(3), 0.0, 0.0)
-    assert wt.last_roll_deg > 30.0
-    assert wt.last_target_j4 > 0.0
-    assert j4 > 0.0
-    assert j5 == 0.0
-
-
-def test_j4_target_clamped():
-    # 锚点 j4=170° + 滚转 +90° → target_j4 应钳制在 +180 内
-    R = rot_from_euler(0, 0, 0)
-    wt = WristTracker(R=R)
-    ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
-    wt.capture(ref, np.zeros(3), 0.0, 170.0)   # 4th arg = j4 锚点
-    rolled = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [10, 1, 1005]])
-    vx, vy, vz, j4, j5 = wt.update(rolled, np.zeros(3), 0.0, 170.0)   # 4th arg = j4 反馈
-    assert wt.last_target_j4 > 90.0
-    assert wt.last_target_j4 <= 180.0
-    assert -1.0 <= j4 <= 1.0
+    wt.capture(ref, (np.zeros(3), _IDQ), 0.0, 0.0)
+    rolled = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000],
+                              [10, 5, 996.34]])   # pinky 偏移 → n 绕 f 转 +30°
+    v = wt.update(rolled, (np.zeros(3), _IDQ), 0.0, 0.0)
+    assert v[3] > 0.03                      # wx = gain·30° ≈ 0.6
+    assert abs(v[0]) < 1e-9 and abs(v[1]) < 1e-9 and abs(v[2]) < 1e-9   # 位置不变 → v=0
 
 
 def test_capture_reanchors():
     R = rot_from_euler(0, 0, 0)
     wt = WristTracker(R=R)
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
-    wt.capture(ref, np.zeros(3), 0.0, 0.0)
-    # 重锚定: 手参考+臂锚点一起更新 → 该手位/该臂位下误差为 0 → 全速 0
+    wt.capture(ref, (np.zeros(3), _IDQ), 0.0, 0.0)
+    # 重锚定: 手参考+末端锚点一起更新 → 该手位/该末端位姿下误差 0 → 全 0
     hand2 = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
-    ee2 = np.array([30.0, 0.0, 0.0])
+    ee2 = (np.array([30.0, 0.0, 0.0]), _IDQ)
     wt.capture(hand2, ee2, 0.0, 0.0)
-    vx, vy, vz, j4, j5 = wt.update(hand2, ee2, 0.0, 0.0)
-    assert vx == 0.0 and vy == 0.0 and vz == 0.0
+    v = wt.update(hand2, ee2, 0.0, 0.0)
+    assert v == (0.0,) * 6
+
+
+def test_no_feedback_returns_zero():
+    # 真机无 get_ee_pose 反馈 → update 返回全 0 (不再差分降级)
+    R = rot_from_euler(0, 0, 0)
+    wt = WristTracker(R=R)
+    ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
+    wt.capture(ref, (np.zeros(3), _IDQ), 0.0, 0.0)
+    now = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
+    assert wt.update(now, None, 0.0, 0.0) == (0.0,) * 6
+
+
+# ── quat_to_rot / rot_error_angvel 纯函数 ─────────────────
+
+
+def test_quat_to_rot_identity_and_axis():
+    np.testing.assert_allclose(quat_to_rot((1.0, 0.0, 0.0, 0.0)), np.eye(3), atol=1e-12)
+    # 绕 x 转 +60°: q=(cos30, sin30, 0, 0) → R_x(60°)
+    th = math.radians(60.0)
+    Rq = quat_to_rot((math.cos(th / 2), math.sin(th / 2), 0.0, 0.0))
+    Rx = np.array([[1, 0, 0],
+                   [0, math.cos(th), -math.sin(th)],
+                   [0, math.sin(th), math.cos(th)]])
+    np.testing.assert_allclose(Rq, Rx, atol=1e-9)
+
+
+def test_rot_error_angvel_axis_and_magnitude():
+    # target = 绕 x 转 +30°, current = I → w=(+gain·30, 0, 0)
+    th = math.radians(30.0)
+    R_target = np.array([[1, 0, 0],
+                         [0, math.cos(th), -math.sin(th)],
+                         [0, math.sin(th), math.cos(th)]])
+    w = rot_error_angvel(R_target, np.eye(3), gain=0.02)
+    assert abs(w[0] - 0.6) < 1e-9          # gain·30 = 0.6
+    assert abs(w[1]) < 1e-9 and abs(w[2]) < 1e-9
+    # 无误差 → 全 0
+    assert np.all(rot_error_angvel(np.eye(3), np.eye(3), gain=0.02) == 0.0)
 
 
 # ── build_palm_pts: HandResult 归一化 landmarks → 像素反投影 ──

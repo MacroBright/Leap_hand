@@ -83,6 +83,47 @@ def test_get_state_parse():
     s.close()
 
 
+def test_end_event_format():
+    from gesture_mapping.arm_client import ArmClient
+    import serial as _s
+    s = _s.serial_for_url("loop://", baudrate=115200, timeout=0.1)
+    c = ArmClient("loop://", ser=s)
+    c.end_event(0.7, -0.3, 0.5, 0.4, -0.9, 0.6)
+    time.sleep(0.05)
+    line = s.readline().decode().strip()
+    parts = line.split()
+    assert parts[0] == "end_event"
+    vals = [float(v) for v in parts[1:7]]
+    assert len(vals) == 6
+    assert abs(vals[0] - 0.7) < 1e-3
+    assert abs(vals[1] - (-0.3)) < 1e-3
+    assert abs(vals[2] - 0.5) < 1e-3
+    assert abs(vals[3] - 0.4) < 1e-3
+    assert abs(vals[4] - (-0.9)) < 1e-3
+    assert abs(vals[5] - 0.6) < 1e-3
+    c.close()
+    s.close()
+
+
+def test_get_ee_pose_parse():
+    from gesture_mapping.arm_client import ArmClient
+    import serial as _s
+    s = _s.serial_for_url("loop://", baudrate=115200, timeout=0.1)
+    c = ArmClient("loop://", ser=s)
+
+    def feed():
+        time.sleep(0.05)
+        s.write(b"EEPOSE:0.50,0.10,0.30,1.00,0.00,0.00,0.00\n")
+
+    t = threading.Thread(target=feed, daemon=True)
+    t.start()
+    pos, quat = c.get_ee_pose()
+    assert pos == [0.5, 0.1, 0.3]
+    assert quat == [1.0, 0.0, 0.0, 0.0]
+    c.close()
+    s.close()
+
+
 def test_get_ee_parse():
     from gesture_mapping.arm_client import ArmClient
     import serial as _s

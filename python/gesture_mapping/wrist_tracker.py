@@ -117,83 +117,113 @@ def delta_to_velocity(delta: float, gain: float, deadzone: float,
     return float(np.clip(v, -max_vel, max_vel))
 
 
-# ── WristTracker: 位置跟随遥操 (手位移 → 目标 → P 位置环 → 速度) ──
+# ── 四元数 / 姿态误差 → 角速度 ──────────────────────────────
+
+def quat_to_rot(q):
+    """wxyz 四元数 → 3x3 旋转矩阵 (numpy)."""
+    w, x, y, z = q
+    return np.array([
+        [1-2*(y*y+z*z), 2*(x*y-w*z),   2*(x*z+w*y)],
+        [2*(x*y+w*z),   1-2*(x*x+z*z), 2*(y*z-w*x)],
+        [2*(x*z-w*y),   2*(y*z+w*x),   1-2*(x*x+y*y)]])
+
+
+def rot_error_angvel(R_target, R_cur, gain):
+    """目标姿态→当前姿态的角速度 (rad/s, 归一化后∈[-1,1]).
+    error = R_target @ R_cur.T → 轴角 → w = gain·clip(angle) · axis.
+    返回 (3,) 单位速度系数."""
+    R_e = R_target @ R_cur.T
+    cos_a = (np.trace(R_e) - 1.0) / 2.0
+    cos_a = float(np.clip(cos_a, -1.0, 1.0))
+    angle = math.acos(cos_a)
+    if angle < 1e-6:
+        return np.zeros(3)
+    ax = np.array([R_e[2,1]-R_e[1,2], R_e[0,2]-R_e[2,0], R_e[1,0]-R_e[0,1]])
+    n = np.linalg.norm(ax)
+    if n < 1e-6:
+        return np.zeros(3)
+    ax = ax / n
+    w = gain * math.degrees(angle)   # 角度→速度 (gain≈0.02/deg)
+    return np.clip(w * ax, -1.0, 1.0)
+
+
+# ── WristTracker: 末端 6DOF 位姿跟随遥操 (手 6DOF → 位姿目标 → 位置/姿态环 → end_event) ──
 
 class WristTracker:
-    """位置跟随遥操: 手位移 → 目标末端位置 → P 位置环 → 速度命令.
+    """末端 6DOF 位姿跟随遥操: 手 6DOF 增量 → 末端位姿目标 → 位置/姿态环 → end_event 速度.
 
-    update() 需每帧喂入末端反馈 ee_mm(基座系mm) 与关节反馈 j4/j5_current(度).
-    按住 H 时手位移决定目标; 松开时 capture() 重锚定 (走哪停哪).
-    手滚转 → J4 主旋转, 手俯仰 → J5 (J6 不再手控).
+    update() 每帧需喂入末端位姿反馈 ee_pose = (pos_mm3, quat_wxyz)（来自 get_ee_pose）.
+    按住 H 时手相对锚点的位置/姿态增量决定末端目标位姿; 松开时 capture() 重锚定 (走哪停哪).
+    无手 / 无参考 / 无反馈 → 全 0 (不再差分降级; 真机 M3 补 FK 后再启用).
     """
 
     def __init__(self, R: np.ndarray,
                  scale_pos: float = 1.0,          # 手位移mm → 末端目标mm
-                 scale_ang: float = 1.0,          # 手滚转/俯仰deg → J4/J5目标deg
                  k_pos: float = 0.02,             # 位置环增益 (1/mm): 50mm误差→~0.9满速
-                 k_ang: float = 0.02,             # 角度环增益 (1/deg): 50°误差→~0.9满速
+                 k_ang: float = 0.02,             # 姿态环增益 (1/deg): 50°误差→~0.9满速
                  deadzone_pos_mm: float = 5.0,    # 位置死区 (防末端抖动)
-                 deadzone_ang_deg: float = 3.0,   # 角度死区
-                 j5_range=(0.0, 90.0), j4_range=(-180.0, 180.0),   # J5/J4 目标钳制范围
+                 deadzone_ang_deg: float = 2.0,   # 姿态死区 (角度误差忽略下限)
                  dt: float = 1.0 / 30.0,
-                 min_cutoff: float = 4.0, beta: float = 0.02):
+                 min_cutoff: float = 4.0, beta: float = 0.02,
+                 j5_range=(0.0, 90.0), j4_range=(-180.0, 180.0)):   # 保留兼容参数 (不再直接用于命令)
         self.R = np.asarray(R, float)
-        self.scale_pos, self.scale_ang = scale_pos, scale_ang
+        self.scale_pos = scale_pos
         self.k_pos, self.k_ang = k_pos, k_ang
         self.deadzone_pos_mm, self.deadzone_ang_deg = deadzone_pos_mm, deadzone_ang_deg
-        self.j5_range, self.j4_range = j5_range, j4_range
         self.dt = dt
+        self.j5_range, self.j4_range = j5_range, j4_range
         # 手参考 + 臂锚点
         self._ref_pts = None
         self._ref_f = self._ref_n = None
-        self._ref_f_hand = None   # J5 俯仰参考: wrist→中指尖 基座系单位方向
         self._has_ref = False
         self._pos_filt = OneEuroFilter(3, min_cutoff=min_cutoff, beta=beta)
-        self._anchor_ee = np.zeros(3)     # 基座系 mm
-        self._anchor_j5 = 0.0
-        self._anchor_j4 = 0.0
+        self._anchor_wrist = None     # 手锚点位置 (相机系 mm)
+        self._anchor_hand_rot = None  # 手锚点姿态 R_hand (3x3, 相机系列向量)
+        self._anchor_ee_pos = None    # 末端锚点位置 (基座系 mm)
+        self._anchor_ee_rot = None    # 末端锚点姿态 R (3x3)
         # 深度时域中值 (Z 轴鲁棒性, 借鉴 toolbox temporal filter)
         self._depth_buf = []
         self.DEPTH_BUF_N = 5
         # 诊断 (HUD 依赖)
         self.last_delta_base = np.zeros(3)
         self.last_target_ee = np.zeros(3)
-        self.last_target_j5 = 0.0
-        self.last_target_j4 = 0.0
         self.last_roll_deg = 0.0
         self.last_pitch_deg = 0.0
 
-    def capture(self, pts21_cam, ee_mm, j5_deg, j4_deg) -> None:
-        """捕获手参考 + 臂锚点 (clutch 按下/松开时调用). pts=None 只清手参考."""
+    def capture(self, pts21_cam, ee_pose, j5_deg=0.0, j4_deg=0.0) -> None:
+        """捕获手参考 + 臂锚点 (clutch 按下/松开时调用).
+
+        pts21_cam=(21,3)相机系mm (None 只清手参考); ee_pose=(pos_mm3, quat_wxyz) 或 None.
+        """
         if pts21_cam is not None:
             self._ref_pts = np.asarray(pts21_cam, float)
             f, n, _ = palm_basis(self._ref_pts)
             self._ref_f = apply_rotation(self.R, np.array([f]))[0]
             self._ref_n = apply_rotation(self.R, np.array([n]))[0]
-            # J5 俯仰参考: wrist→中指尖方向 (杠杆长, 对弯曲灵敏)
-            f_hand = self._ref_pts[_MCP_MIDDLE_TIP] - self._ref_pts[_WRIST]
-            f_hand = f_hand / (np.linalg.norm(f_hand) + 1e-9)
-            self._ref_f_hand = apply_rotation(self.R, np.array([f_hand]))[0]
             self._pos_filt.reset()
             self._has_ref = True
+            self._anchor_wrist = self._ref_pts[_WRIST].copy()
+            self._anchor_hand_rot = np.stack([f, n, np.cross(f, n)], axis=1)  # 相机系列向量
         else:
             self._has_ref = False
-        if ee_mm is not None:
-            self._anchor_ee = np.asarray(ee_mm, float)
-        self._anchor_j5 = float(j5_deg)
-        self._anchor_j4 = float(j4_deg)
+        if ee_pose is not None:
+            pos_mm, quat = ee_pose
+            self._anchor_ee_pos = np.asarray(pos_mm, float)
+            self._anchor_ee_rot = quat_to_rot(quat)
         self._depth_buf.clear()
         self.last_delta_base = np.zeros(3)
-        self.last_target_ee = np.array(self._anchor_ee)
-        self.last_target_j5 = self._anchor_j5
-        self.last_target_j4 = self._anchor_j4
+        self.last_target_ee = (np.array(self._anchor_ee_pos) if self._anchor_ee_pos is not None
+                               else np.zeros(3))
         self.last_roll_deg = 0.0
         self.last_pitch_deg = 0.0
 
-    def update(self, pts21_cam, ee_mm, j5_deg, j4_deg=0.0):
-        """位置跟随: 返回 (vx,vy,vz,j4_cmd,j5_cmd) ∈ [-1,1]. 无手/无参考 → 全0."""
-        if pts21_cam is None or not self._has_ref:
-            return (0.0, 0.0, 0.0, 0.0, 0.0)
+    def update(self, pts21_cam, ee_pose, j5_deg=0.0, j4_deg=0.0):
+        """末端 6DOF 位姿跟随: 返回 (vx,vy,vz, wx,wy,wz) ∈[-1,1].
+
+        无手 / 无参考 / 反馈缺失(ee_pose=None) → 全 0.
+        """
+        if pts21_cam is None or not self._has_ref or ee_pose is None:
+            return (0.0,) * 6
         pts = np.asarray(pts21_cam, float)
 
         # 深度时域中值: wrist 深度(Z)滚动中值, 去飞点
@@ -205,52 +235,37 @@ class WristTracker:
             pts = pts.copy()
             pts[0][2] = float(np.median(self._depth_buf))
 
-        # 位置目标 = 锚点 + 手位移·scale
-        wrist = apply_rotation(self.R, np.array([pts[0]]))[0]
-        wrist = self._pos_filt(wrist)
-        ref_w = apply_rotation(self.R, np.array([self._ref_pts[0]]))[0]
-        delta = wrist - ref_w
-        self.last_delta_base = delta
-        target_ee = self._anchor_ee + delta * self.scale_pos
-        self.last_target_ee = target_ee
+        # 位置增量: 手位移 (相机系) → 基座系 → 末端目标位置
+        wrist = self._pos_filt(pts[_WRIST])
+        dpos_cam = wrist - self._anchor_wrist
+        dpos_base = apply_rotation(self.R, np.array([dpos_cam]))[0]
+        self.last_delta_base = dpos_base
+        target_pos = self._anchor_ee_pos + dpos_base * self.scale_pos
+        self.last_target_ee = target_pos
 
-        # 位置环: error → 速度 (P + 死区 + 饱和)
-        # ee 反馈不可用(真机固件无 get_ee)时退回锚点 → error=手位移·scale (差分模式降级)
-        if ee_mm is None:
-            ee_fb = self._anchor_ee
-        else:
-            ee_fb = np.asarray(ee_mm, float)
-        err = target_ee - ee_fb
-        vx = delta_to_velocity(err[0], self.k_pos, self.deadzone_pos_mm)
-        vy = delta_to_velocity(err[1], self.k_pos, self.deadzone_pos_mm)
-        vz = delta_to_velocity(err[2], self.k_pos, self.deadzone_pos_mm)
-
-        # 姿态目标: 滚转→J4 主旋转, 俯仰→J5
+        # 姿态增量: 手旋转增量 → 末端目标姿态
         f, n, _ = palm_basis(pts)
+        R_hand_now = np.stack([f, n, np.cross(f, n)], axis=1)
+        dRot = R_hand_now @ self._anchor_hand_rot.T    # 手旋转增量 (相对锚点)
+        target_rot = dRot @ self._anchor_ee_rot        # 末端目标姿态 (基座系)
+
+        # 位置环 + 姿态环 (反馈来自 get_ee_pose)
+        ee_pos, ee_quat = ee_pose
+        v_lin = np.array([delta_to_velocity(target_pos[i] - ee_pos[i], self.k_pos,
+                                            self.deadzone_pos_mm) for i in range(3)])
+        w_ang = rot_error_angvel(target_rot, quat_to_rot(ee_quat), self.k_ang)
+
+        # 诊断 (HUD): 手滚转/俯仰相对参考 (基座系)
         f_base = apply_rotation(self.R, np.array([f]))[0]
         n_base = apply_rotation(self.R, np.array([n]))[0]
-        # J5 俯仰 (手腕内外翻转): 用 wrist→中指尖方向 (杠杆长, 对弯曲灵敏)
-        f_hand = pts[_MCP_MIDDLE_TIP] - pts[_WRIST]
-        f_hand = f_hand / (np.linalg.norm(f_hand) + 1e-9)
-        f_hand_base = apply_rotation(self.R, np.array([f_hand]))[0]
-        pitch_deg = math.degrees(pitch_angle(f_hand_base))
-        roll_deg = math.degrees(roll_angle(n_base, f_base, self._ref_n, self._ref_f))
-        self.last_pitch_deg, self.last_roll_deg = pitch_deg, roll_deg
-        ref_pitch = math.degrees(pitch_angle(self._ref_f_hand))
-        target_j4 = float(np.clip(self._anchor_j4 + roll_deg * self.scale_ang,
-                                  *self.j4_range))
-        target_j5 = float(np.clip(self._anchor_j5 + (pitch_deg - ref_pitch) * self.scale_ang,
-                                  *self.j5_range))
-        self.last_target_j4, self.last_target_j5 = target_j4, target_j5
+        self.last_pitch_deg = math.degrees(pitch_angle(f_base))
+        self.last_roll_deg = math.degrees(roll_angle(n_base, f_base, self._ref_n, self._ref_f))
 
-        # 角度环
-        j4_cmd = delta_to_velocity(target_j4 - float(j4_deg), self.k_ang, self.deadzone_ang_deg)
-        j5_cmd = delta_to_velocity(target_j5 - float(j5_deg), self.k_ang, self.deadzone_ang_deg)
-
-        return (vx, vy, vz, j4_cmd, j5_cmd)
+        return (float(v_lin[0]), float(v_lin[1]), float(v_lin[2]),
+                float(w_ang[0]), float(w_ang[1]), float(w_ang[2]))
 
     def no_hand(self):
         self._pos_filt.reset()
         self.last_roll_deg = 0.0
         self.last_pitch_deg = 0.0
-        return (0.0, 0.0, 0.0, 0.0, 0.0)
+        return (0.0,) * 6
