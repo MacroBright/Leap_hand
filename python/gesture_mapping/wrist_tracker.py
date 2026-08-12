@@ -190,10 +190,11 @@ class WristTracker:
         self.last_roll_deg = 0.0
         self.last_pitch_deg = 0.0
 
-    def capture(self, pts21_cam, ee_pose, j5_deg=0.0, j4_deg=0.0) -> None:
+    def capture(self, pts21_cam, wrist_mm, ee_pose, j5_deg=0.0, j4_deg=0.0) -> None:
         """捕获手参考 + 臂锚点 (clutch 按下/松开时调用).
 
-        pts21_cam=(21,3)相机系mm (None 只清手参考); ee_pose=(pos_mm3, quat_wxyz) 或 None.
+        pts21_cam=(21,3)相机系mm (None 只清手参考);
+        wrist_mm=腕心位置(基座系mm, 位置锚点); ee_pose=(pos_mm3, quat_wxyz) 或 None (姿态锚点).
         """
         if pts21_cam is not None:
             self._ref_pts = np.asarray(pts21_cam, float)
@@ -206,9 +207,10 @@ class WristTracker:
             self._anchor_hand_rot = np.stack([f, n, np.cross(f, n)], axis=1)  # 相机系列向量
         else:
             self._has_ref = False
+        if wrist_mm is not None:
+            self._anchor_ee_pos = np.asarray(wrist_mm, float)
         if ee_pose is not None:
-            pos_mm, quat = ee_pose
-            self._anchor_ee_pos = np.asarray(pos_mm, float)
+            _, quat = ee_pose
             self._anchor_ee_rot = quat_to_rot(quat)
         self._depth_buf.clear()
         self.last_delta_base = np.zeros(3)
@@ -217,12 +219,14 @@ class WristTracker:
         self.last_roll_deg = 0.0
         self.last_pitch_deg = 0.0
 
-    def update(self, pts21_cam, ee_pose, j5_deg=0.0, j4_deg=0.0):
+    def update(self, pts21_cam, wrist_mm, ee_pose, j5_deg=0.0, j4_deg=0.0):
         """末端 6DOF 位姿跟随: 返回 (vx,vy,vz, wx,wy,wz) ∈[-1,1].
 
-        无手 / 无参考 / 反馈缺失(ee_pose=None) → 全 0.
+        位置反馈用腕心 wrist_mm(基座系mm, 解耦), 姿态反馈用 ee_pose(末端四元数).
+        无手 / 无参考 / 反馈缺失 → 全 0.
         """
-        if pts21_cam is None or not self._has_ref or ee_pose is None:
+        if (pts21_cam is None or not self._has_ref
+                or wrist_mm is None or ee_pose is None):
             return (0.0,) * 6
         pts = np.asarray(pts21_cam, float)
 
@@ -249,9 +253,9 @@ class WristTracker:
         dRot = R_hand_now @ self._anchor_hand_rot.T    # 手旋转增量 (相对锚点)
         target_rot = dRot @ self._anchor_ee_rot        # 末端目标姿态 (基座系)
 
-        # 位置环 + 姿态环 (反馈来自 get_ee_pose)
-        ee_pos, ee_quat = ee_pose
-        v_lin = np.array([delta_to_velocity(target_pos[i] - ee_pos[i], self.k_pos,
+        # 位置环用腕心反馈(解耦), 姿态环用末端四元数反馈
+        _, ee_quat = ee_pose
+        v_lin = np.array([delta_to_velocity(target_pos[i] - wrist_mm[i], self.k_pos,
                                             self.deadzone_pos_mm) for i in range(3)])
         w_ang = rot_error_angvel(target_rot, quat_to_rot(ee_quat), self.k_ang)
 

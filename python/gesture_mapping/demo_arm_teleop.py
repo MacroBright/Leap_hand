@@ -111,12 +111,16 @@ def main():
         arm.remote_enable()
         try:
             angles, _, _ = arm.get_state()
+            wrist0 = None
+            w = arm.get_wrist()
+            if w is not None:
+                wrist0 = np.array(w) * 1000.0
             ee_pose0 = None
             ep = arm.get_ee_pose()
             if ep is not None:
                 ee_pose0 = (np.array(ep[0]) * 1000.0, ep[1])   # 位置米→mm, 四元数不变
             if len(angles) >= 6:
-                wt.capture(None, ee_pose0, angles[4], angles[3])
+                wt.capture(None, wrist0, ee_pose0, angles[4], angles[3])
         except Exception:
             pass
         print(f"[臂] 已连接 {args.port}")
@@ -154,10 +158,14 @@ def main():
             hand = hands[0] if hands else None
             pts = build_palm_pts(hand, depth, K) if hand is not None else None
 
-            # 读末端位姿+关节反馈 (仿真 get_ee_pose; 无 arm 时用 None/零)
+            # 读腕心+末端位姿+关节反馈 (仿真 get_wrist/get_ee_pose; 无 arm 时用 None/零)
+            wrist_mm = None
             ee_pose = None
             j4c = j5c = 0.0
             if arm is not None:
+                w = arm.get_wrist()
+                if w is not None:
+                    wrist_mm = np.array(w) * 1000.0
                 ep = arm.get_ee_pose()
                 if ep is not None:
                     ee_pose = (np.array(ep[0]) * 1000.0, ep[1])   # 位置米→mm, 四元数不变
@@ -235,7 +243,7 @@ def main():
                 action = _KEYS[key]
                 if action == "clutch":
                     clutch = not clutch
-                    wt.capture(pts, ee_pose, j5c, j4c)   # 按下/松开都重锚定(手参考+末端锚点)
+                    wt.capture(pts, wrist_mm, ee_pose, j5c, j4c)   # 按下/松开都重锚定(手参考+末端锚点)
                 elif action == "calib" and key in (ord("k"), ord("K")):
                     if calib_step == 0:
                         calib_step = 1
@@ -288,7 +296,7 @@ def main():
                     ee_pose = (np.array(ep[0]) * 1000.0, ep[1]) if ep is not None else None
                     j5c = angles[4] if len(angles) >= 6 else 0.0
                     j4c = angles[3] if len(angles) >= 6 else 0.0
-                    wt.capture(pts, ee_pose, j5c, j4c)
+                    wt.capture(pts, wrist_mm, ee_pose, j5c, j4c)
                     print("[复位] 完成, 已重新锚定")
                     if len(angles) >= 6:
                         init_ref = home_pose if home_pose is not None else INIT_POSE_DEG
@@ -297,12 +305,12 @@ def main():
                             print(f"[复位] 警告: 臂未归到初始位 (最大偏差 {dev:.0f}°)")
                 cmd = wt.no_hand()
             elif pts is None:
-                cmd = wt.update(None, ee_pose, j5c, j4c)
+                cmd = wt.update(None, wrist_mm, ee_pose, j5c, j4c)
             elif clutch:
-                cmd = wt.update(pts, ee_pose, j5c, j4c)
+                cmd = wt.update(pts, wrist_mm, ee_pose, j5c, j4c)
             else:
                 cmd = wt.no_hand()
-                wt.capture(pts, ee_pose, j5c, j4c)   # 未按住时也持续重锚定(手参考+末端锚点)
+                wt.capture(pts, wrist_mm, ee_pose, j5c, j4c)   # 未按住时也持续重锚定(手参考+末端锚点)
 
             cmd = cmd_smoother(np.array(cmd))
             if arm is not None:

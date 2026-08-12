@@ -93,10 +93,10 @@ def test_position_6dof_drives_vx():
     R = rot_from_euler(0, 0, 0)
     wt = WristTracker(R=R)                       # k_pos=0.02, deadzone=5mm
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
-    wt.capture(ref, (np.zeros(3), _IDQ), 0.0, 0.0)
+    wt.capture(ref, np.zeros(3), (np.zeros(3), _IDQ), 0.0, 0.0)
     # 手沿 +x 移 50mm → 目标 (50,0,0)mm; ee 还在锚点 → error 50mm → vx>0
     now = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
-    v = wt.update(now, (np.zeros(3), _IDQ), 0.0, 0.0)
+    v = wt.update(now, np.zeros(3), (np.zeros(3), _IDQ), 0.0, 0.0)
     assert v[0] > 0.03                     # (50-5)*0.02 = 0.9
     assert v[1] == 0.0 and v[2] == 0.0
     assert abs(v[3]) < 1e-9 and abs(v[4]) < 1e-9 and abs(v[5]) < 1e-9   # 姿态不变 → w=0
@@ -106,10 +106,10 @@ def test_position_loop_closes_error():
     R = rot_from_euler(0, 0, 0)
     wt = WristTracker(R=R)
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
-    wt.capture(ref, (np.zeros(3), _IDQ), 0.0, 0.0)
+    wt.capture(ref, np.zeros(3), (np.zeros(3), _IDQ), 0.0, 0.0)
     # 手 +50mm, 但 ee 已到 (45,0,0)mm → 剩 5mm = 死区 5mm → 停
     now = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
-    v = wt.update(now, (np.array([45.0, 0.0, 0.0]), _IDQ), 0.0, 0.0)
+    v = wt.update(now, np.array([45.0, 0.0, 0.0]), (np.zeros(3), _IDQ), 0.0, 0.0)
     assert v[0] == 0.0
     assert v[1] == 0.0 and v[2] == 0.0
 
@@ -119,10 +119,10 @@ def test_orientation_delta_drives_w():
     R = rot_from_euler(0, 0, 0)
     wt = WristTracker(R=R)
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
-    wt.capture(ref, (np.zeros(3), _IDQ), 0.0, 0.0)
+    wt.capture(ref, np.zeros(3), (np.zeros(3), _IDQ), 0.0, 0.0)
     rolled = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000],
                               [10, 5, 996.34]])   # pinky 偏移 → n 绕 f 转 +30°
-    v = wt.update(rolled, (np.zeros(3), _IDQ), 0.0, 0.0)
+    v = wt.update(rolled, np.zeros(3), (np.zeros(3), _IDQ), 0.0, 0.0)
     assert v[3] > 0.03                      # wx = gain·30° ≈ 0.6
     assert abs(v[0]) < 1e-9 and abs(v[1]) < 1e-9 and abs(v[2]) < 1e-9   # 位置不变 → v=0
 
@@ -131,12 +131,12 @@ def test_capture_reanchors():
     R = rot_from_euler(0, 0, 0)
     wt = WristTracker(R=R)
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
-    wt.capture(ref, (np.zeros(3), _IDQ), 0.0, 0.0)
+    wt.capture(ref, np.zeros(3), (np.zeros(3), _IDQ), 0.0, 0.0)
     # 重锚定: 手参考+末端锚点一起更新 → 该手位/该末端位姿下误差 0 → 全 0
     hand2 = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
     ee2 = (np.array([30.0, 0.0, 0.0]), _IDQ)
-    wt.capture(hand2, ee2, 0.0, 0.0)
-    v = wt.update(hand2, ee2, 0.0, 0.0)
+    wt.capture(hand2, np.array([30.0, 0.0, 0.0]), ee2, 0.0, 0.0)
+    v = wt.update(hand2, np.array([30.0, 0.0, 0.0]), ee2, 0.0, 0.0)
     assert v == (0.0,) * 6
 
 
@@ -145,7 +145,7 @@ def test_no_feedback_returns_zero():
     R = rot_from_euler(0, 0, 0)
     wt = WristTracker(R=R)
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
-    wt.capture(ref, (np.zeros(3), _IDQ), 0.0, 0.0)
+    wt.capture(ref, np.zeros(3), (np.zeros(3), _IDQ), 0.0, 0.0)
     now = _identity_pts21([[50, 0, 1000], [60, 0, 1005], [62, 0, 1000], [58, 0, 995]])
     assert wt.update(now, None, 0.0, 0.0) == (0.0,) * 6
 
