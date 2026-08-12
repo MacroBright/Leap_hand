@@ -54,7 +54,7 @@ _CALIB_STEP_HINTS = [
 _DIR_CODE_HINT = "方向码: 1=+X 2=-X 3=+Y 4=-Y 5=+Z(上) 6=-Z(下)"
 
 # 软复位目标: 各关节初始位 J1..J6 (与仿真 INIT_POSE_DEG 一致)
-INIT_POSE_DEG = [90.0, 45.0, 90.0, 180.0, 0.0, 0.0]
+INIT_POSE_DEG = [90.0, 45.0, 90.0, 90.0, 0.0, 0.0]
 
 
 def main():
