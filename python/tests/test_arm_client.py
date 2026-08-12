@@ -117,3 +117,20 @@ def test_get_wrist_parse():
     assert wrist == [0.3, 0.05, 0.4]
     c.close()
     s.close()
+
+
+def test_set_joints_and_rel_rotate():
+    from gesture_mapping.arm_client import ArmClient
+    import serial as _s
+    s = _s.serial_for_url("loop://", baudrate=115200, timeout=0.1)
+    c = ArmClient("loop://", ser=s)
+    c.set_joints([90.0, 45.0, 90.0, 90.0, 0.0, 0.0])
+    time.sleep(0.05)
+    line = s.readline().decode().strip()
+    assert line == "set_joints 90.000 45.000 90.000 90.000 0.000 0.000"
+    c.rel_rotate(3, 5.0)
+    time.sleep(0.05)
+    line = s.readline().decode().strip()
+    assert line == "rel_rotate 3 5.0"
+    c.close()
+    s.close()

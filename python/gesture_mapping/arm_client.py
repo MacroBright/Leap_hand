@@ -82,6 +82,15 @@ class ArmClient:
         """软复位: 全部关节回预设初始角度."""
         self._ser.write(b"soft_reset\n")
 
+    def set_joints(self, angles_deg) -> None:
+        """设置全部关节目标角度(度). 用于手动复位点. 列表长度为 6."""
+        cmd = "set_joints " + " ".join(f"{float(a):.3f}" for a in angles_deg[:6])
+        self._ser.write((cmd + "\n").encode())
+
+    def rel_rotate(self, joint_id: int, delta_deg: float) -> None:
+        """单关节相对旋转 (joint_id: 1-based 1-6). 录制复位点时微调用."""
+        self._ser.write(f"rel_rotate {joint_id} {float(delta_deg):.1f}\n".encode())
+
     def close(self) -> None:
         try:
             self._ser.close()

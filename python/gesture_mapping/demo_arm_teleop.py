@@ -15,13 +15,15 @@
 
 按键:
   H (按住)   离合器: 按住跟随, 松开=重锚定 (走哪停哪)
-  R          复位: 全部关节回初始位, 等待归位后重新锚定
+  M          录制复位点: 1-6选关节, W/S微调(±5°), S保存到 home_pose.json, M退出
+  R          复位: 回手动复位点(若有)或默认初始位, 等待归位后重新锚定
   C          重载 handeye_calib.json
   K          轴对齐校准向导 (手沿3方向挥动+选1-6方向码, 自动求解手眼R并保存)
   Y          e_stop
   Q/ESC      退出
 """
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -42,6 +44,7 @@ _KEYS = {
     ord("r"): "reset", ord("R"): "reset",
     ord("c"): "calib", ord("C"): "calib",
     ord("k"): "calib", ord("K"): "calib",
+    ord("m"): "record", ord("M"): "record",
     ord("y"): "estop", ord("Y"): "estop",
     ord("q"): "quit", 27: "quit",
 }
@@ -55,6 +58,27 @@ _DIR_CODE_HINT = "方向码: 1=+X 2=-X 3=+Y 4=-Y 5=+Z(上) 6=-Z(下)"
 
 # 软复位目标: 各关节初始位 J1..J6 (与仿真 INIT_POSE_DEG 一致)
 INIT_POSE_DEG = [90.0, 45.0, 90.0, 90.0, 0.0, 0.0]
+HOME_POSE_PATH = Path(__file__).resolve().parent / "home_pose.json"
+REC_STEP_DEG = 5.0        # 录制模式单关节步进角度
+
+
+def _load_home_pose():
+    """读手动录制复位点 (home_pose.json) → [j1..j6] 或 None."""
+    if HOME_POSE_PATH.exists():
+        try:
+            data = json.loads(HOME_POSE_PATH.read_text())
+            return [float(a) for a in data["angles"][:6]]
+        except Exception:
+            pass
+    return None
+
+
+def _save_home_pose(angles):
+    """保存当前关节角为复位点."""
+    HOME_POSE_PATH.write_text(json.dumps(
+        {"angles": [round(float(a), 2) for a in angles[:6]]}))
+    print(f"[录制] 复位点已保存到 {HOME_POSE_PATH}: "
+          f"{[round(float(a), 1) for a in angles[:6]]}")
 
 
 def main():
@@ -96,6 +120,13 @@ def main():
 
     clutch = False
     reset_hold = 0        # 复位等待帧计数 (~5s @30fps)
+
+    # 录制复位点状态 (M 进入)
+    home_pose = _load_home_pose()
+    if home_pose is not None:
+        print(f"[复位点] 已加载手动复位点: {[round(a,1) for a in home_pose]}")
+    record_mode = False
+    record_joint = 0
 
     # 校准状态机 (K 进入轴对齐向导)
     calib_step = 0            # 0=off, 1/2/3=收集第几步
@@ -178,6 +209,28 @@ def main():
                 wt.R = R
                 wt.capture(None, None, 0.0, 0.0)
                 print("已翻转 Z 方向并保存")
+            # ── 录制复位点模式 (M 进入/退出) ──
+            elif record_mode:
+                if ord("1") <= key <= ord("6"):
+                    record_joint = key - ord("1")
+                    print(f"[录制] 选中 J{record_joint+1} "
+                          f"(W/↑=正转, X/↓=反转 {REC_STEP_DEG:g}°, S=保存复位点)")
+                elif key in (ord("w"), ord("W"), 82):      # W / ↑: 正转
+                    if arm is not None:
+                        arm.rel_rotate(record_joint + 1, +REC_STEP_DEG)
+                    print(f"[录制] J{record_joint+1} +{REC_STEP_DEG:g}°")
+                elif key in (ord("x"), ord("X"), 84):      # X / ↓: 反转
+                    if arm is not None:
+                        arm.rel_rotate(record_joint + 1, -REC_STEP_DEG)
+                    print(f"[录制] J{record_joint+1} -{REC_STEP_DEG:g}°")
+                elif key in (ord("s"), ord("S")):          # S: 保存复位点
+                    angles, _, _ = arm.get_state()
+                    if len(angles) >= 6:
+                        _save_home_pose(angles)
+                        home_pose = [float(a) for a in angles[:6]]
+                elif key in (ord("m"), ord("M")):
+                    record_mode = False
+                    print("[录制] 退出录制模式, 恢复遥操")
             elif key in _KEYS:
                 action = _KEYS[key]
                 if action == "clutch":
@@ -205,11 +258,23 @@ def main():
                 elif action == "estop" and arm is not None:
                     arm.e_stop()
                     print("[急停] e_stop")
+                elif action == "record":
+                    record_mode = not record_mode
+                    record_joint = 0
+                    if record_mode:
+                        print("[录制] 进入复位点录制: 1-6选关节, W/↑正转, X/↓反转, "
+                              "S保存复位点, M退出")
+                    else:
+                        print("[录制] 退出录制模式")
                 elif action == "reset":
                     if arm is not None:
-                        arm.soft_reset()
+                        if home_pose is not None:
+                            arm.set_joints(home_pose)
+                            print(f"[复位] 回手动复位点 {[round(a,1) for a in home_pose]}")
+                        else:
+                            arm.soft_reset()
+                            print("[复位] 回默认初始位")
                         reset_hold = 150    # ~5s @30fps, 让仿真归位
-                        print("[复位] 机械臂回初始位, 等待归位...")
                     else:
                         print("[复位] 无臂连接 (--no-drive), 忽略")
                 elif action == "quit":
@@ -228,7 +293,8 @@ def main():
                     wt.capture(pts, ee_mm, j5c, j4c)
                     print("[复位] 完成, 已重新锚定")
                     if len(angles) >= 6:
-                        dev = max(abs(a - init) for a, init in zip(angles, INIT_POSE_DEG))
+                        init_ref = home_pose if home_pose is not None else INIT_POSE_DEG
+                        dev = max(abs(a - init) for a, init in zip(angles, init_ref))
                         if dev > 20.0:
                             print(f"[复位] 警告: 臂未归到初始位 (最大偏差 {dev:.0f}°)")
                 cmd = wt.no_hand()
@@ -262,6 +328,12 @@ def main():
             cv2.putText(bgr, f"CLUTCH:{'ON' if clutch else 'OFF'}",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                         (0, 255, 0) if clutch else (0, 0, 255), 2)
+            if record_mode:
+                cur = (f"[{', '.join(f'{a:.0f}' for a in angles[:6])}]"
+                       if "angles" in dir() and len(angles) >= 6 else "")
+                cv2.putText(bgr, f"REC J{record_joint+1} {cur} (W/X转 S存)",
+                            (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                            (0, 255, 255), 1)
             cv2.putText(bgr, f"v=({cmd[0]:+.2f},{cmd[1]:+.2f},{cmd[2]:+.2f}) "
                              f"J4={cmd[3]:+.2f} J5={cmd[4]:+.2f}",
                         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
