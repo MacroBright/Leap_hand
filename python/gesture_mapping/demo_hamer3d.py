@@ -32,6 +32,8 @@ from gesture_mapping.demo_realtime import (
     _OpenCVCamera, _MOTOR_DIAG, find_best_camera, draw_hud,
     print_motor_mapping, print_angles_table,
 )
+from gesture_mapping.retarget_mapper import RetargetMapper
+from gesture_mapping.retarget_obs import human_reach_obs, human_pinch_gap
 
 
 # MANO skeleton connectivity (MediaPipe-index) for the 3D overlay
@@ -53,6 +55,42 @@ _MIRRORED_LABEL = {"right": "left", "left": "right"}
 #        1=MediaPipe world landmarks (规范3D 手模型, 米制, 相机帧率, 稳)
 #        2=MediaPipe 伪3D (原 z)
 _SOURCE_NAMES = {0: "HAMER 3D", 1: "WORLD 3D", 2: "MP PSEUDO-3D"}
+
+# 三源增益/基线解耦 (P0-3, 2026-08-10): 每种 3D 源几何特性不同 (伪3D z 压缩、
+# world 米制、hamer 真3D), 共用一套增益/基线会让 M 切源时角度跳变。每源独立文件。
+_SOURCE_GAIN_FILES = {
+    0: "joint_gain_hamer.json",     # hamer 真3D: 增益接近 1.0
+    1: "joint_gain_world3d.json",   # world-3D 米制: 增益接近 1.0
+    2: "joint_gain_3d.json",        # 伪3D: 保留原放大 (兼容历史调参)
+}
+_SOURCE_CALIB_FILES = {
+    0: "calibration_hamer.json",
+    1: "calibration_world3d.json",
+    2: "calibration_3d.json",
+}
+
+
+def _apply_source_config(source_mode, mapper, calibrator, gm_dir):
+    """按 source_mode 换载该源的增益 + 校准基线 (启动与 M 键切源时调用).
+
+    Returns (gain_path, calib_path) 供 S 保存 / SPACE 校准写到当前源文件。
+    """
+    gain_path = Path(gm_dir) / _SOURCE_GAIN_FILES[source_mode]
+    if mapper.load_gain_from(str(gain_path)):
+        print(f"[INFO] gain[{_SOURCE_NAMES[source_mode]}] ← {gain_path.name}")
+    else:
+        # 无该源增益文件: world/hamer 是真3D 用恒等 1.0 (现场 TAB+[] 调参 S 保存)
+        mapper.joint_gain = np.ones(16)
+        print(f"[INFO] gain[{_SOURCE_NAMES[source_mode]}] 无文件 → 恒等 1.0 "
+              f"(现场 TAB+[] 调参, S 保存到 {_SOURCE_GAIN_FILES[source_mode]})")
+    calib_path = Path(gm_dir) / _SOURCE_CALIB_FILES[source_mode]
+    if calibrator.load_points_baseline(str(calib_path)):
+        print(f"[INFO] baseline[{_SOURCE_NAMES[source_mode]}] ← {calib_path.name}")
+    else:
+        calibrator._baseline_points = None
+        calibrator._calibrated_points = False
+        print(f"[INFO] baseline[{_SOURCE_NAMES[source_mode]}] 无 → 需 SPACE 校准")
+    return gain_path, calib_path
 
 # 帧级质量门控: 平均关键点可见度低于此阈值 → 坏帧, 保持上一帧好角度 (不外推重建)
 _MIN_VIS = 0.55
@@ -194,6 +232,9 @@ def main():
                              "'first' = first detected hand, no gate")
     parser.add_argument("--img", type=str, default=None,
                         help="run on a single image and exit")
+    parser.add_argument("--retarget", action="store_true",
+                        help="用重定向模块 (reach-fraction 求解) 替代直映角映射 "
+                             "(Phase 3; 无需校准基线)")
     args = parser.parse_args()
 
     tracker = HandTracker(max_num_hands=2, min_detection_confidence=0.5)
@@ -202,25 +243,25 @@ def main():
         print("[INFO] HaMeR 3D ready (fp16, MANO regression)")
     else:
         print("[WARN] hamer unavailable (no CUDA / not installed) → MediaPipe pseudo-3D fallback")
-    print("[INFO] 默认 3D 源: MediaPipe world-3D (按 M 循环: world-3D → hamer → 伪3D)")
+    print("[INFO] 默认 3D 源: MediaPipe 伪3D (实机跟手最佳; 按 M 循环: 伪3D → world-3D → hamer)")
 
     mapper = JointMapper()
     calibrator = Calibrator(mapper)
+    retarget = RetargetMapper() if args.retarget else None
+    if retarget is not None:
+        print("[INFO] RETARGET 模式: reach-fraction 求解替代直映 (无需校准基线/增益)")
     finger_id = FingerIdentifier(mapper, bend_threshold=0.20)
-    angle_filter = OneEuroFilter(n_joints=16, min_cutoff=1.0, beta=0.007)
+    # 滤波平衡 (2026-08-10): 0.5Hz 是为压折叠噪声降到最低, 但级联 kp+angle 滤波滞后
+    # 300-500ms、1Hz 动态幅度衰减到 30% (调研: /tmp/leap_lag_sim.py)。抬到 1.0Hz +
+    # beta 0.02: 静态仍有 min_cutoff 平滑, 快速运动由 beta 抬升截止 → 跟手。
+    # 若折叠抖动回潮 → 真机降到 0.7-0.8, 或转 world-3D 源 (P1-1) 从源头降噪。
+    angle_filter = OneEuroFilter(n_joints=16, min_cutoff=1.0, beta=0.02)
 
-    # hamer 的 3D 弯曲角本身已准确, 不再需要 MediaPipe 伪 3D 的 1.5× 放大。
-    # 用独立增益文件, 默认恒等 (1.0), 供实时调参后保存 (与 demo_realtime 互不影响)。
-    gain_path = Path(__file__).resolve().parent / "joint_gain_3d.json"
-    if gain_path.exists():
-        mapper.load_gain_from(str(gain_path))
-    else:
-        mapper.joint_gain = np.ones(16)
-
-    # 持久化张开基线: 上次 SPACE 校准结果自动加载, 免去每次会话重新调 0
-    calib_path = Path(__file__).resolve().parent / "calibration_3d.json"
-    if calibrator.load_points_baseline(str(calib_path)):
-        print(f"[INFO] Loaded 3D calibration baseline: {calib_path}")
+    # 三源增益/基线解耦 (P0-3): 每源独立增益+基线文件。默认源=伪3D (source_mode=2),
+    # 切源 (M) 时换载对应文件。伪3D 沿用 joint_gain_3d.json / calibration_3d.json。
+    source_mode = 2
+    gm_dir = Path(__file__).resolve().parent
+    gain_path, calib_path = _apply_source_config(source_mode, mapper, calibrator, gm_dir)
 
     # 实测电机限位表 (Task D): 若存在, --drive 写入前裁剪到机械范围.
     # 格式: {"min": [16], "max": [16]} (rad, 伺服真实位置). 无表 → 不裁剪 (兼容旧行为).
@@ -285,7 +326,8 @@ def main():
 
     frame_count = 0
     show_diag = False
-    source_mode = 1              # 0=hamer, 1=MediaPipe world-3D (默认), 2=伪3D (M 循环)
+    # source_mode 已在上方定义 (=2 伪3D 默认; M 循环: 0=hamer, 1=world-3D, 2=伪3D)
+    # 默认伪3D: 实机跟手最佳 (握拳可达, 稳定迅速); world-3D 攥拳屈曲不足, hamer 抖动
     last_hres = None
     last_commanded_pose = None   # 实际发送的绝对位姿 (丢失时平滑回 OPEN 的起点)
     loss_t0 = None               # 手丢失时刻 (monotonic)
@@ -294,6 +336,9 @@ def main():
     smoothed_kp = None          # last OneEuro-smoothed kp3d (angles + calibration source)
     kp_smoother = OneEuroFilter(n_joints=63, min_cutoff=0.8, beta=0.005)
     world_smoother = OneEuroFilter(n_joints=63, min_cutoff=1.2, beta=0.004)
+    # 伪3D 关键点级平滑 (归一化坐标): 抑制折叠姿势 landmark 抖动/吸附 → 更稳角度
+    # 1.0→1.5Hz (2026-08-10): 减级联滞后 (kp+angle 双低通)
+    pseudo_smoother = OneEuroFilter(n_joints=63, min_cutoff=1.5, beta=0.004)
     frame_smoother = OneEuroFilter(n_joints=9, min_cutoff=1.0, beta=0.005)
     bbox_ema = None             # (cx, cy, size) EMA → stable hamer crop across frames
     prev_time = time.monotonic()
@@ -330,6 +375,7 @@ def main():
                     smoothed_kp = None
                     bbox_ema = None
                     world_smoother.reset()
+                    pseudo_smoother.reset()
                     frame_smoother.reset()
                     if frame_count % 30 == 0:
                         print(f"  (no {args.hand} hand detected)")
@@ -381,7 +427,16 @@ def main():
                         # 坏帧: 保持上一帧好角度, 不外推重建 (绿色关键点仍显示)
                         angles, bent, scores, source = last_good
                     else:
-                        if source_mode == 0 and hres is not None:
+                        if retarget is not None:
+                            # 重定向路径 (Phase 3): 人手 reach → 求解 → 16 角
+                            npts = np.array([[lm.x, lm.y, lm.z] for lm in hand.landmarks],
+                                            dtype=np.float64)
+                            pts = smoothed_kp = pseudo_smoother(npts.reshape(-1)).reshape(21, 3)
+                            obs = human_reach_obs(pts)
+                            angles = retarget.solve(obs, pinch_tgt=human_pinch_gap(pts))
+                            bent, scores = finger_id.identify_points(pts)
+                            source = "RETARGET"
+                        elif source_mode == 0 and hres is not None:
                             pts = smoothed_kp = kp_smoother(hres.kp3d.reshape(-1)).reshape(21, 3)
                             palm_frame = _smoothed_frame(pts, frame_smoother)
                             angles = calibrator.map_points(pts, frame=palm_frame)
@@ -400,10 +455,14 @@ def main():
                             bent, scores = finger_id.identify_points(pts)
                             source = _SOURCE_NAMES[1]
                         else:
-                            # pseudo-3D 源: 角度来自 MediaPipe 伪 z, 校准用 HandResult 路径
-                            smoothed_kp = None
-                            angles = calibrator.map(hand, (h, w))
-                            bent, scores = finger_id.identify(hand, (h, w))
+                            # pseudo-3D 源: 归一化关键点先过 OneEuro (抑制折叠姿势
+                            # landmark 抖动/吸附), 再走 points 校准路径 (与 world-3D 一致)
+                            npts = np.array([[lm.x, lm.y, lm.z] for lm in hand.landmarks],
+                                            dtype=np.float64)
+                            pts = smoothed_kp = pseudo_smoother(npts.reshape(-1)).reshape(21, 3)
+                            palm_frame = _smoothed_frame(pts, frame_smoother)
+                            angles = calibrator.map_points(pts, frame=palm_frame)
+                            bent, scores = finger_id.identify_points(pts)
                             source = _SOURCE_NAMES[2]
 
                         angles = angle_filter(angles)
@@ -430,6 +489,7 @@ def main():
                 smoothed_kp = None
                 bbox_ema = None
                 world_smoother.reset()
+                pseudo_smoother.reset()
                 frame_smoother.reset()
                 if frame_count % 30 == 0:
                     print("  (no hand detected)")
@@ -463,24 +523,28 @@ def main():
                                 print("[INFO] LEAP Hand 已上电 (全开位)。")
                             except OSError as e:
                                 print(f"[WARN] 上电失败: {e}")
-                        # 校准必须用"本帧实际驱动角度的点源": hamer/world 用 points 基线,
-                        # 伪 3D 用 HandResult 基线 (两套基线槽位分离, 不可混用)
-                        if smoothed_kp is not None:
-                            palm_frame = _smoothed_frame(smoothed_kp, frame_smoother)
-                            baseline = calibrator.calibrate_points(smoothed_kp, frame=palm_frame)
-                            calibrator.save_points_baseline(str(calib_path))
-                        else:
-                            baseline = calibrator.calibrate(hand, (h, w))
+                        # 校准: 仅直映路径需要基线 (retarget 模式无需). 重定向模式 SPACE 只上电
+                        if retarget is None:
+                            if smoothed_kp is not None:
+                                palm_frame = _smoothed_frame(smoothed_kp, frame_smoother)
+                                baseline = calibrator.calibrate_points(smoothed_kp, frame=palm_frame)
+                                calibrator.save_points_baseline(str(calib_path))
+                            else:
+                                baseline = calibrator.calibrate(hand, (h, w))
                         angle_filter.reset()
                         kp_smoother.reset()
                         world_smoother.reset()
+                        pseudo_smoother.reset()
                         frame_smoother.reset()
-                        print(f"\n  *** CALIBRATED! baseline max: {baseline.max():.3f} rad ***\n")
+                        print(f"\n  *** CALIBRATED! baseline max: {baseline.max():.3f} rad ***\n"
+                              if retarget is None else "\n  *** 上电完成 (RETARGET 模式) ***\n")
                 elif key == ord("d"):
                     show_diag = not show_diag
                     print(f"\n  Diagnostic overlay: {'ON' if show_diag else 'OFF'}\n")
                 elif key == ord("m"):
                     source_mode = (source_mode + 1) % 3
+                    gain_path, calib_path = _apply_source_config(
+                        source_mode, mapper, calibrator, gm_dir)
                     print(f"\n  3D source: {_SOURCE_NAMES[source_mode]}\n")
                 elif key == 9:  # Tab — cycle joint 0-15 for gain tuning
                     cur_joint = (cur_joint + 1) % 16

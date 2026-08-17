@@ -160,3 +160,26 @@ def test_map_points_accepts_explicit_frame():
     bad = (frame[0], np.array([1.0, 0.0, 0.0]),
            np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0]))
     assert not np.allclose(auto, mapper.map_points_to_leap(pts, frame=bad))
+
+
+# ─── 拇指对掌增强 (方案B, 2026-08-06) ─────────────────────────────
+
+def test_thumb_opposition_flat_open_is_zero():
+    """张开手 → 对掌度≈0 → 拇指 mcp/pip 不被补偿 (回归守卫)."""
+    mapper = JointMapper()
+    a = mapper.map_points_to_leap(_open_hand_pts())
+    assert abs(a[12]) < 0.05   # thumb mcp
+    assert abs(a[14]) < 0.05   # thumb pip
+
+
+def test_thumb_tip_to_palm_increases_flexion():
+    """拇指 TIP 移向掌心 (对掌) → thumb mcp/pip 屈曲显著增大."""
+    mapper = JointMapper()
+    open_a = mapper.map_points_to_leap(_open_hand_pts())
+    pts = _open_hand_pts()
+    palm_center = 0.5 * (pts[5] + pts[17])   # index_mcp 与 pinky_mcp 中点
+    pts[4] = palm_center + np.array([0.0, 0.0, 0.05])   # THUMB_TIP → 掌心
+    a = mapper.map_points_to_leap(pts)
+    assert a[12] > open_a[12] + 0.3   # thumb mcp 增大
+    assert a[14] > open_a[14] + 0.3   # thumb pip 增大
+    assert a[12] > 0.3 and a[14] > 0.3

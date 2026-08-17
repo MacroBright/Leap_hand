@@ -139,7 +139,6 @@ LEAP> thumb side 0.3   # 拇指侧摆
 | 文件 | 用途 |
 |------|------|
 | `poses.json` | 录制姿势数据, `main.py` 启动时自动加载 |
-| `calibration_offset.json` | 旧版偏移量 (已废弃) |
 
 ---
 

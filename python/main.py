@@ -77,8 +77,10 @@ def _is_valid_pose(pose):
     # 读取失败回退特征: 全零 或 16 个值完全相同 (真实电机读数必然分散)
     if np.all(np.abs(pose) < 1e-6) or np.ptp(pose) < 1e-6:
         return False
-    # 真实手可动作范围 (实测约 -0.2 ~ 5.6 rad)
-    if pose.min() < -0.5 or pose.max() > 6.3:
+    # 真实手可动作范围: 依据实测 motor_limits.json 全局边界
+    #   max 最大值 = ID12(Thb MCP) 8.12, min 最小值 = ID3(Idx DIP) -0.28
+    #   (上限必须覆盖 ID12 限位 8.12; 否则比耶等拇指大动作姿势会被误判)
+    if pose.min() < -2.5 or pose.max() > 8.5:
         return False
     return True
 
@@ -113,7 +115,7 @@ class LeapNode:
         self.kP = 600
         self.kI = 0
         self.kD = 200
-        self.curr_lim = 550
+        self.curr_lim = 350
 
         self.motors = motors = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 

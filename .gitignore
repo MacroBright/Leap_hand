@@ -159,9 +159,6 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# CoAgent orchestrator state
-.orchestrator/
-
 # 离线测试图像 (seeded hamer example_data + generated _compare overlays, 不入库)
 python/images/
 # MediaPipe 模型权重 (7.8MB, 可重新下载, 不入库)

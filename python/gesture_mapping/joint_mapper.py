@@ -95,6 +95,25 @@ _FAN_SIGN = {
     "thumb":  1.0,
 }
 
+# 拇指对掌/捏合增强 (2026-08-10 升级): flexion 角捕捉不到 "TIP 跨掌" 与
+# "指尖对捏" 的位移。两级度量, 均用 手掌宽度 归一化 (尺度无关, 对伪3D
+# 压缩鲁棒; 参考 Mingrui-Yu retargeting: 原始捏合距离对跟踪噪声脆弱必须缩放):
+#   (1) opposition — 拇指 TIP→掌心(食/小指根中点) 接近度 (攥拳跨掌)
+#   (2) pinch_gap   — 拇指 TIP↔各指 TIP 间隙 (捏合哪个指)
+# 拇指 mcp/pip 取 max(opposition, 各 pinch_gap)。补偿叠加在乘 gain 之前,
+# 走统一 gain/clip 管线。权重 0.6→0.9: 对掌有效增量从 0.36 提到 ~0.7+。
+_OPP_MCP_WEIGHT = 0.9   # 对掌/捏合度 → 拇指 mcp 附加屈曲 (rad)
+_OPP_PIP_WEIGHT = 0.9   # 对掌/捏合度 → 拇指 pip 附加屈曲 (rad)
+_OPP_PALM_SCALE = 1.0   # 归一化: TIP 距掌心 ≤ 手掌宽度×scale 即视为对掌
+_PINCH_SCALE = 1.0      # 归一化: 拇指↔指 TIP 间隙 ≤ 手掌宽度×scale 即视为捏合
+
+# 折叠 landmark 降噪 (P1-2, 2026-08-10): MediaPipe 折叠时 DIP/TIP landmark
+# 吸附/塌陷, 末段 (DIP→TIP) arccos 病态 → 噪声大 (且 DIP 增益 3.0 放大抖动,
+# 迫使 0.5Hz 重滤波 → 滞后)。当手指折叠 (PIP 屈曲超阈值) 时, DIP 用近端
+# PIP 屈曲回退 (指尖朝向保真, 论文②: 朝向缺失 → 手弯得不像人)。
+_FOLD_PIP_THRESHOLD = 0.8    # rad: PIP 屈曲超过此值视为折叠
+_FOLD_DIP_COUPLING = 0.6     # 折叠时 DIP = coupling*PIP + (1-coupling)*DIP_raw
+
 
 class JointMapper:
     """Convert MediaPipe HandResult → LEAP Hand 16-DOF relative angles.
@@ -165,6 +184,10 @@ class JointMapper:
 
         angles = np.zeros(_NUM_LEAP_DOF, dtype=np.float64)
 
+        # 对掌/捏合度量 (拇指补偿用): 手指循环前算一次
+        opp, pinch_gaps = self._opposition_pinch(pts)
+        thumb_drive = max([opp] + list(pinch_gaps.values())) if pinch_gaps else opp
+
         for human_finger, leap_start in _FINGER_MAP:
             chain = _FINGER_CHAIN[human_finger]
             kps = pts[chain]
@@ -177,6 +200,15 @@ class JointMapper:
             mcp = self._compute_flexion(wrist_pt, kps[0], kps[1])
             pip = self._compute_flexion(kps[0], kps[1], kps[2])
             dip = self._compute_flexion(kps[1], kps[2], kps[3])
+
+            # 折叠 landmark 降噪 (P1-2): 折叠时末段 arccos 病态 → DIP 回退到 PIP
+            if pip > _FOLD_PIP_THRESHOLD:
+                dip = _FOLD_DIP_COUPLING * pip + (1.0 - _FOLD_DIP_COUPLING) * dip
+
+            # 拇指对掌/捏合补偿: 取 max(跨掌对掌, 各指捏合) → 叠加到 mcp/pip
+            if human_finger == "thumb":
+                mcp += _OPP_MCP_WEIGHT * thumb_drive
+                pip += _OPP_PIP_WEIGHT * thumb_drive
 
             rel = (fan, mcp, pip, dip)
             order = (_THUMB_JOINT_ORDER if human_finger == "thumb"
@@ -342,6 +374,33 @@ class JointMapper:
         return wrist.copy(), normal, mid_dir, lateral
 
     # ─── Joint angle computations ──────────────────────────────────
+
+    @staticmethod
+    def _opposition_pinch(pts: np.ndarray):
+        """对掌度 + 各映射指捏合间隙 (均 [0,1], 手掌宽度归一化, 尺度无关).
+
+        Returns:
+            opp: float — 拇指 TIP 相对掌心(食/小指根中点) 接近度 (攥拳跨掌)
+            gaps: Dict[str, float] — 每映射指 index/middle/pinky 的
+                  拇指 TIP↔该指 TIP 间隙接近度 (捏合), 1 = 指尖相触
+        """
+        tip = pts[Landmark["THUMB_TIP"]]
+        idx_mcp = pts[Landmark["INDEX_MCP"]]
+        pky_mcp = pts[Landmark["PINKY_MCP"]]
+        palm_center = 0.5 * (idx_mcp + pky_mcp)
+        palm_width = float(np.linalg.norm(idx_mcp - pky_mcp))
+        if palm_width < 1e-9:
+            return 0.0, {}
+        opp = float(np.clip(1.0 - np.linalg.norm(tip - palm_center)
+                            / (_OPP_PALM_SCALE * palm_width), 0.0, 1.0))
+        gaps = {}
+        for f, tip_idx in [("index", Landmark["INDEX_TIP"]),
+                           ("middle", Landmark["MIDDLE_TIP"]),
+                           ("pinky", Landmark["PINKY_TIP"])]:
+            gaps[f] = float(np.clip(
+                1.0 - np.linalg.norm(tip - pts[tip_idx])
+                / (_PINCH_SCALE * palm_width), 0.0, 1.0))
+        return opp, gaps
 
     @staticmethod
     def _compute_flexion(
