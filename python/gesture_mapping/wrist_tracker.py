@@ -3,6 +3,9 @@
 纯函数部分: 深度反投影、掌参考系、俯仰/滚转角、delta→速度。
 WristTracker 位置跟随范式 (参考 teleop_gesture_toolbox TeleoperationByDrawing):
   手位移 → 目标末端位置 → P 位置环 → 速度命令; 松开 H 重锚定 (走哪停哪)。
+
+注: 2026-08 handeye_calib.py 整体迁去 Arm-robot_VLA 仓 (本仓不再依赖 Arm),
+apply_rotation() 函数被内联到本文件 (_apply_rotation, 下方) 避免跨仓库 sys.path.
 """
 import math
 from typing import Optional, Tuple
@@ -10,7 +13,18 @@ from typing import Optional, Tuple
 import numpy as np
 
 from gesture_mapping.filter import OneEuroFilter
-from gesture_mapping.handeye_calib import apply_rotation
+
+
+def _apply_rotation(R: np.ndarray, pts) -> np.ndarray:
+    """R(3,3) 作用于 (N,3) 点集 (每行一个列向量).
+
+    本地副本 — 源自 handeye_calib.apply_rotation. 2026-08 因 handeye_calib.py
+    整体迁去 Arm-robot_VLA 仓 (跨仓库不再可达), 留本文件做共享.
+    任何修改请同步 Arm-robot_VLA/scripts/handeye_calib.apply_rotation.
+    """
+    pts = np.asarray(pts, float)
+    return (R @ pts.T).T
+
 
 # MediaPipe 21 点索引
 _WRIST = 0
@@ -199,8 +213,8 @@ class WristTracker:
         if pts21_cam is not None:
             self._ref_pts = np.asarray(pts21_cam, float)
             f, n, _ = palm_basis(self._ref_pts)
-            self._ref_f = apply_rotation(self.R, np.array([f]))[0]
-            self._ref_n = apply_rotation(self.R, np.array([n]))[0]
+            self._ref_f = _apply_rotation(self.R, np.array([f]))[0]
+            self._ref_n = _apply_rotation(self.R, np.array([n]))[0]
             self._pos_filt.reset()
             self._has_ref = True
             self._anchor_wrist = self._ref_pts[_WRIST].copy()
@@ -242,7 +256,7 @@ class WristTracker:
         # 位置增量: 手位移 (相机系) → 基座系 → 末端目标位置
         wrist = self._pos_filt(pts[_WRIST])
         dpos_cam = wrist - self._anchor_wrist
-        dpos_base = apply_rotation(self.R, np.array([dpos_cam]))[0]
+        dpos_base = _apply_rotation(self.R, np.array([dpos_cam]))[0]
         self.last_delta_base = dpos_base
         target_pos = self._anchor_ee_pos + dpos_base * self.scale_pos
         self.last_target_ee = target_pos
@@ -260,8 +274,8 @@ class WristTracker:
         w_ang = rot_error_angvel(target_rot, quat_to_rot(ee_quat), self.k_ang)
 
         # 诊断 (HUD): 手滚转/俯仰相对参考 (基座系)
-        f_base = apply_rotation(self.R, np.array([f]))[0]
-        n_base = apply_rotation(self.R, np.array([n]))[0]
+        f_base = _apply_rotation(self.R, np.array([f]))[0]
+        n_base = _apply_rotation(self.R, np.array([n]))[0]
         self.last_pitch_deg = math.degrees(pitch_angle(f_base))
         self.last_roll_deg = math.degrees(roll_angle(n_base, f_base, self._ref_n, self._ref_f))
 

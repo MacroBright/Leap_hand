@@ -36,10 +36,10 @@
 
 | 模块 | 位置 | 状态 |
 |------|------|------|
-| 人手 6DOF → 末端位姿 → `end_event` 6DOF 速度 | `Leap_Hand/python/gesture_mapping/wrist_tracker.py` + `demo_arm_teleop.py` | ✅ 仿真验证通过（P2+P3），`WristTracker.update()` 每帧产出 `(vx,vy,vz,wx,wy,wz)` |
+| 人手 6DOF → 末端位姿 → `end_event` 6DOF 速度 | `Leap_Hand/python/gesture_mapping/wrist_tracker.py` + `Arm-robot_VLA/scripts/demo_arm_teleop.py`（2026-08 从本仓迁出） | ✅ 仿真验证通过（P2+P3），`WristTracker.update()` 每帧产出 `(vx,vy,vz,wx,wy,wz)` |
 | 手势 → LEAP 16DOF | `Leap_Hand/python/gesture_mapping/demo_hamer3d.py` + `joint_mapper.py` | ✅ 可用 |
-| 臂串口客户端（真机/仿真） | `Leap_Hand/python/gesture_mapping/arm_client.py` | ✅ `get_state/end_event/set_joints/remote_event/e_stop` |
-| 手眼标定 K（手→基座系旋转） | `handeye_calib.json` + K 向导 | ✅ |
+| 臂串口客户端（真机/仿真） | `Arm-robot_VLA/scripts/arm_client.py`（2026-08 从本仓迁出） | ✅ `get_state/end_event/set_joints/remote_event/e_stop` |
+| 手眼标定 K（手→基座系旋转） | `Arm-robot_VLA/scripts/handeye_calib.json` + K 向导（2026-08 从本仓迁出） | ✅ |
 | 臂 LeRobot 适配器骨架（仅臂 6DOF） | `Arm-robot_VLA/lerobot_robot_massage/massage_robot.py` | ✅ 已实现 `Robot` 子类，`get_observation`/`send_action`/`calibrate`/`emergency_stop`；手部为 TODO |
 | 仿真臂（STM32 协议逐字节对齐） | `Arm-robot_VLA/scripts/mujoco_sim.py`（TCP 5555 + 共享内存相机） | ✅ 含 `get_ee_pose`/`end_event` 扩展，可作采集验证环境 |
 | LeRobot 0.4.4 | `smolvla` conda env | ✅ `lerobot_record/teleoperate/eval/train` CLI 齐全 |

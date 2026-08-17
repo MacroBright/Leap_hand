@@ -3,6 +3,16 @@
 > 2026-08-12 | 手 6DOF → 末端位姿 → 位置/姿态环 → end_event → 全 IK
 > 关联：[测试教程](2026-08-11-arm-visual-teleop-test-guide.md) · [设计](design/2026-08-11-arm-visual-teleop-design.md)
 
+> ⚠ **路径迁移注 (2026-08)**：本手册描述的脚本原位于 `Leap_Hand/python/gesture_mapping/`。
+> 2026-08 起已迁至 `Arm-robot_VLA/scripts/`。**当前运行命令**：
+>
+> ```bash
+> python Arm-robot_VLA/scripts/demo_arm_teleop.py --port socket://localhost:5555
+> ```
+>
+> 下方步骤（按键 H/M/R/C/K/Y/Q、`home_pose.json` / `handeye_calib.json` 数据文件位置）
+> 与操作均保持不变, 仅脚本路径需替换。
+
 ---
 
 ## 一、相机正确摆放位置

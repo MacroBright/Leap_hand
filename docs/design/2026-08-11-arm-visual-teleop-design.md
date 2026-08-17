@@ -3,6 +3,11 @@
 > 2026-08-11 | 差分速度控制 · D455 深度反投影 · 仿真先行
 > 关联：Leap_Hand W1（`wrist_tracker` 收尾）、Arm-robot_VLA 遥操作
 
+> ⚠ **路径迁移注 (2026-08)**：本设计文档描述的 `handeye_calib.py` / `arm_client.py` /
+> `demo_arm_teleop.py` 已迁至 `Arm-robot_VLA/scripts/`。`wrist_tracker.py` /
+> `camera.py` / `filter.py` 仍留 Leap_Hand, 由 `demo_arm_teleop.py` 通过 sys.path
+> 跨仓库导入。下方表格里的"位置"列保留迁移前路径仅作历史记录, 实施以新位置为准。
+
 ---
 
 ## 1. 目标

@@ -9,7 +9,9 @@ from gesture_mapping.wrist_tracker import (
     backproject, build_palm_pts, delta_to_velocity, median_depth_at,
     palm_basis, pitch_angle, quat_to_rot, roll_angle, rot_error_angvel,
 )
-from gesture_mapping.handeye_calib import rot_from_euler
+# rot_from_euler 2026-08 随 handeye_calib.py 迁 Arm-robot_VLA 仓. 本测试只在
+# 0 角情形下用 (即单位矩阵), 这里直接用 np.eye(3) 替代; 非 0 角的真实旋转
+# 数据请见 Arm-robot_VLA/scripts/test_handeye_calib.py.
 
 
 def test_backproject_center():
@@ -85,12 +87,12 @@ _IDQ = (1.0, 0.0, 0.0, 0.0)    # 单位四元数
 
 
 def test_no_hand_zeroes():
-    wt = WristTracker(R=rot_from_euler(0, 0, 0))
+    wt = WristTracker(R=np.eye(3))
     assert wt.update(None, None, 0, 0) == (0.0,) * 6
 
 
 def test_position_6dof_drives_vx():
-    R = rot_from_euler(0, 0, 0)
+    R = np.eye(3)
     wt = WristTracker(R=R)                       # k_pos=0.02, deadzone=5mm
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
     wt.capture(ref, np.zeros(3), (np.zeros(3), _IDQ), 0.0, 0.0)
@@ -103,7 +105,7 @@ def test_position_6dof_drives_vx():
 
 
 def test_position_loop_closes_error():
-    R = rot_from_euler(0, 0, 0)
+    R = np.eye(3)
     wt = WristTracker(R=R)
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
     wt.capture(ref, np.zeros(3), (np.zeros(3), _IDQ), 0.0, 0.0)
@@ -116,7 +118,7 @@ def test_position_loop_closes_error():
 
 def test_orientation_delta_drives_w():
     # 掌法线 n 绕 f(+x) 转 +30° → 末端目标绕 x 转 +30° → wx>0, 位置保持 0
-    R = rot_from_euler(0, 0, 0)
+    R = np.eye(3)
     wt = WristTracker(R=R)
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
     wt.capture(ref, np.zeros(3), (np.zeros(3), _IDQ), 0.0, 0.0)
@@ -128,7 +130,7 @@ def test_orientation_delta_drives_w():
 
 
 def test_capture_reanchors():
-    R = rot_from_euler(0, 0, 0)
+    R = np.eye(3)
     wt = WristTracker(R=R)
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
     wt.capture(ref, np.zeros(3), (np.zeros(3), _IDQ), 0.0, 0.0)
@@ -142,7 +144,7 @@ def test_capture_reanchors():
 
 def test_no_feedback_returns_zero():
     # 真机无 get_ee_pose 反馈 → update 返回全 0 (不再差分降级)
-    R = rot_from_euler(0, 0, 0)
+    R = np.eye(3)
     wt = WristTracker(R=R)
     ref = _identity_pts21([[0, 0, 1000], [10, 0, 1005], [12, 0, 1000], [8, 0, 995]])
     wt.capture(ref, np.zeros(3), (np.zeros(3), _IDQ), 0.0, 0.0)

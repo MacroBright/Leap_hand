@@ -2,6 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> ⚠ **路径迁移注 (2026-08)**：本 plan 描述的 `R_L/python/gesture_mapping/handeye_calib.py` /
+> `arm_client.py` / `demo_arm_teleop.py` 已迁至 `Arm-robot_VLA/scripts/`。`wrist_tracker.py`
+> 等共用模块留 Leap_Hand。下方"Task 5: handeye_calib.py"等任务清单保留历史,
+> 新代码提交请直接落到 Arm-robot_VLA/scripts/ 下。
+
 **Goal:** 用 D455 深度反投影的人手手腕位置/姿态，通过差分速度（`remote_event`）实时遥操 zero-robotic-arm 末端（位置 + J5 上下 + J6 旋转），仿真先行。
 
 **Architecture:** 视觉侧（Leap_Hand）产出 `(vx,vy,vz,j5,j6)∈[-1,1]` 速度命令 → `remote_event` → STM32 固件（位置 IK + J5/J6 关节速度）或 MuJoCo 仿真。核心新模块 `wrist_tracker.py`（深度反投影 + 掌参考系 + 动态参考 + 速度生成），机械臂侧仅做仿真 `remote_event` 语义对齐（与固件逐字节一致）。

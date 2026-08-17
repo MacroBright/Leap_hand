@@ -3,6 +3,18 @@
 > 2026-08-11 | 位置跟随控制 · D455 深度 · 仿真先行
 > 关联：[设计文档](design/2026-08-11-arm-visual-teleop-design.md) · [实现计划](plans/2026-08-11-arm-visual-teleop.md)
 
+> ⚠ **路径迁移注 (2026-08)**：本教程描述的代码原位于 `Leap_Hand/python/gesture_mapping/`。
+> 2026-08 起，`demo_arm_teleop.py`、`arm_client.py`、`handeye_calib.py` 与
+> 对应数据文件已迁至 `Arm-robot_VLA/scripts/`。**当前运行命令**：
+>
+> ```bash
+> python Arm-robot_VLA/scripts/demo_arm_teleop.py --port socket://localhost:5555
+> ```
+>
+> `wrist_tracker.py`、`camera.py`、`filter.py`、`hand_tracker.py` 仍留在 Leap_Hand
+> （被 `demo_arm_teleop.py` 通过 `sys.path` 跨仓库导入）。下方步骤与按键保持不变，
+> 仅文件路径需替换。
+
 ---
 
 ## 1. 系统概览

@@ -15,7 +15,7 @@
 | **灵巧手控制 Hub** | Python 控制中心（`main.py` / LeapNode）：PID 控制、姿势预设录制与回放、逐指 / 手势交互控制、16 电机直连。 |
 | **手部关键点识别 → 视觉遥操** | 摄像头（RealSense D455）实时捕捉人手关键点（MediaPipe 21 点 / HaMeR 3D）→ 映射 LEAP 16-DOF 关节角驱动灵巧手；并可进一步把**人手 6DOF**（手腕位置 + 手掌姿态）映射为**机械臂末端位姿**，实现整臂视觉遥操作。 |
 
-> 当前进度：灵巧手 16-DOF 手势映射已真机验证；机械臂视觉遥操基于仿真验证、差分速度 / 末端位姿跟随已实现（真机接线需 STM32 固件支持末端 FK 反馈，见 [demo_arm_teleop.py](python/gesture_mapping/demo_arm_teleop.py)）。LeRobot BYOH 数据采集集成处于规划阶段。
+> 当前进度：灵巧手 16-DOF 手势映射已真机验证；机械臂视觉遥操基于仿真验证、差分速度 / 末端位姿跟随已实现（真机接线需 STM32 固件支持末端 FK 反馈，见 `Arm-robot_VLA/scripts/demo_arm_teleop.py`，2026-08 已从本仓迁出）。LeRobot BYOH 数据采集集成处于规划阶段。
 
 ---
 
@@ -79,10 +79,11 @@ cd python && python gesture_mapping/demo_hamer3d.py [--drive]    # Swappable 3D 
 **Vision teleoperation of an arm** (simulation first — run the MuJoCo arm in another terminal):
 
 ```bash
-cd python && python gesture_mapping/demo_arm_teleop.py --port socket://localhost:5555
+# 2026-08 起: 机械臂视觉遥操已迁到 Arm-robot_VLA 仓
+python Arm-robot_VLA/scripts/demo_arm_teleop.py --port socket://localhost:5555
 ```
 
-See the [arm visual teleop operation manual](docs/2026-08-12-arm-visual-teleop-operation-manual.md) for camera placement, hand→arm motion table, and key bindings (H clutch, M record home pose, R reset, K hand-eye calibration wizard, Y e-stop).
+See the [arm visual teleop operation manual](docs/2026-08-12-arm-visual-teleop-operation-manual.md) for camera placement, hand→arm motion table, and key bindings (H clutch, M record home pose, R reset, K hand-eye calibration wizard, Y e-stop). 手动部分路径已迁移到 `Arm-robot_VLA/scripts/`，但操作手册里描述的步骤与按键保持不变。
 
 ---
 
@@ -100,9 +101,12 @@ Leap_Hand/
 │       ├── hand_tracker.py      # MediaPipe 21-kp tracking
 │       ├── hamer_3d.py          # HaMeR 3D hand mesh source
 │       ├── joint_mapper.py      # Human hand → LEAP 16-DOF mapping
-│       ├── wrist_tracker.py     # Wrist 3D + palm 6-DOF pose
-│       ├── handeye_calib.py     # Hand–eye rotation calibration (Euler / Procrustes / wizard)
-│       └── demo_*.py            # demo_realtime / demo_hamer3d / demo_arm_teleop
+│       ├── wrist_tracker.py     # Wrist 3D + palm 6-DOF pose (内联 _apply_rotation;
+│       │                       #   handeye_calib.apply_rotation 2026-08 随仓迁 Arm 后
+│       │                       #   不再跨仓依赖, 直接复制 4 行 numpy 实现)
+│       ├── handeye_calib.py     # ⚠ 2026-08 迁出本仓 (Arm-robot_VLA/scripts/handeye_calib.py)
+│       └── demo_*.py            # demo_realtime / demo_hamer3d
+│                                 # demo_arm_teleop 也已迁 Arm-robot_VLA/scripts/
 ├── cpp/  ros_module/  ros2_module/  useful_tools/   # Upstream SDK (unchanged)
 ├── CAD/                                              # Upstream CAD files
 ├── docs/                        # Added: design / plans / operation manuals (zh)
