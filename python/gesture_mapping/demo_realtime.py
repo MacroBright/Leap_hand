@@ -245,13 +245,23 @@ def print_angles_table(angles, bent_finger, bend_scores):
         print(f"  >>> BENT: {HUMAN_FINGER_LABELS.get(bent_finger, bent_finger)} <<<")
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--camera", type=int, default=-1,
                         help="Camera index (default: auto-detect)")
-    parser.add_argument("--drive", action="store_true", help="Drive LEAP Hand hardware")
+    drive_group = parser.add_mutually_exclusive_group()
+    drive_group.add_argument(
+        "--drive", action="store_true",
+        help="Drive LEAP Hand hardware with legacy settings")
+    drive_group.add_argument(
+        "--safe-drive", action="store_true",
+        help="Drive LEAP Hand hardware with low-force safety settings")
     parser.add_argument("--no-display", action="store_true")
-    args = parser.parse_args()
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
 
     tracker = HandTracker(max_num_hands=1, min_detection_confidence=0.5)
     mapper = JointMapper()
@@ -277,7 +287,23 @@ def main():
     JOINT_DIR = np.array([-1, -1, -1, -1,  -1, -1, -1, -1,  -1, -1, -1, -1,  1, -1, -1, -1])
 
     leap = None
-    if args.drive:
+    safe_leap = None
+    if args.safe_drive:
+        from leap_hand_utils.dynamixel_client import DynamixelClient
+        from main import OPEN_POSE
+        from gesture_mapping.safe_leap_controller import SafeLeapController
+
+        port = ("/dev/serial/by-id/"
+                "usb-FTDI_USB__-__Serial_Converter_FTB8HNYU-if00-port0")
+        client = DynamixelClient(list(range(16)), port, 4000000)
+        safe_leap = SafeLeapController(client, OPEN_POSE)
+        try:
+            safe_leap.start()
+            print("[INFO] LEAP Hand connected in low-force safety mode.")
+        except Exception as e:
+            print(f"[WARN] Cannot start safe drive: {e}")
+            safe_leap = None
+    elif args.drive:
         from main import LeapNode, OPEN_POSE
         try:
             leap = LeapNode()
@@ -338,7 +364,13 @@ def main():
                 angles = angle_filter(angles)  # temporal smoothing
                 bent, scores = finger_id.identify(hand, (h, w))
 
-                if leap is not None:
+                if safe_leap is not None:
+                    from main import OPEN_POSE
+                    import leap_hand_utils.leap_hand_utils as lhu
+                    target = lhu.angle_safety_clip(
+                        OPEN_POSE + JOINT_DIR * angles)
+                    safe_leap.track(target)
+                elif leap is not None:
                     from main import OPEN_POSE
                     leap.set_leap(OPEN_POSE + JOINT_DIR * angles)
 
@@ -352,7 +384,9 @@ def main():
             else:
                 if frame_count % 30 == 0:
                     print("  (no hand detected)")
-                if leap is not None:
+                if safe_leap is not None:
+                    safe_leap.on_tracking_lost()
+                elif leap is not None:
                     leap.set_open()
 
             if not args.no_display:
@@ -402,7 +436,9 @@ def main():
     except KeyboardInterrupt:
         print("\n[INFO] Interrupted.")
     finally:
-        if leap is not None:
+        if safe_leap is not None:
+            safe_leap.shutdown(return_open=True)
+        elif leap is not None:
             leap.set_open()
             leap.disconnect()
         tracker.close()
