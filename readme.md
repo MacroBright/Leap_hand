@@ -76,6 +76,28 @@ cd python && python gesture_mapping/demo_realtime.py [--drive]   # MediaPipe (ps
 cd python && python gesture_mapping/demo_hamer3d.py [--drive]    # Swappable 3D source (hamer / world / pseudo-3D)
 ```
 
+**Safe MediaPipe hardware drive (recommended for initial hardware tests):**
+
+First verify tracking without opening the motor serial port:
+
+```bash
+cd python
+python gesture_mapping/demo_realtime.py --camera 0
+```
+
+After clearing the hand workspace and keeping the power cutoff within reach,
+enable the validated low-force mode:
+
+```bash
+python gesture_mapping/demo_realtime.py --camera 0 --safe-drive
+```
+
+Safe mode uses `kP=300`, `kD=100`, and goal current `150`. It starts with a
+two-second smooth return to the open pose, rate-limits visual targets, holds
+the last target through tracking losses up to 0.5 seconds, and then gradually
+returns to open. Press `Q` or `Ctrl+C` to return open and disable torque. The
+legacy `--drive` option retains its original higher-force behavior.
+
 **Vision teleoperation of an arm** (simulation first — run the MuJoCo arm in another terminal):
 
 ```bash
@@ -101,6 +123,7 @@ Leap_Hand/
 │       ├── hand_tracker.py      # MediaPipe 21-kp tracking
 │       ├── hamer_3d.py          # HaMeR 3D hand mesh source
 │       ├── joint_mapper.py      # Human hand → LEAP 16-DOF mapping
+│       ├── safe_leap_controller.py # Low-force motor lifecycle + rate limiting
 │       ├── wrist_tracker.py     # Wrist 3D + palm 6-DOF pose (内联 _apply_rotation;
 │       │                       #   handeye_calib.apply_rotation 2026-08 随仓迁 Arm 后
 │       │                       #   不再跨仓依赖, 直接复制 4 行 numpy 实现)
