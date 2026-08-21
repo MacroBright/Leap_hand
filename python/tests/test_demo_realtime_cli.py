@@ -1,6 +1,8 @@
+import inspect
+
 import pytest
 
-from gesture_mapping.demo_realtime import build_parser
+from gesture_mapping.demo_realtime import build_parser, main
 
 
 def test_drive_modes_are_mutually_exclusive():
@@ -20,3 +22,10 @@ def test_vision_only_remains_the_default():
     args = build_parser().parse_args([])
     assert args.safe_drive is False
     assert args.drive is False
+
+
+def test_safe_hardware_starts_only_after_camera_warmup():
+    source = inspect.getsource(main)
+    assert source.index('print("[INFO] Camera warm.') < source.index(
+        "safe_leap.start()"
+    )

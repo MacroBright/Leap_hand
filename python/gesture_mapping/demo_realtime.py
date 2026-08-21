@@ -297,12 +297,6 @@ def main():
                 "usb-FTDI_USB__-__Serial_Converter_FTB8HNYU-if00-port0")
         client = DynamixelClient(list(range(16)), port, 4000000)
         safe_leap = SafeLeapController(client, OPEN_POSE)
-        try:
-            safe_leap.start()
-            print("[INFO] LEAP Hand connected in low-force safety mode.")
-        except Exception as e:
-            print(f"[WARN] Cannot start safe drive: {e}")
-            safe_leap = None
     elif args.drive:
         from main import LeapNode, OPEN_POSE
         try:
@@ -342,6 +336,16 @@ def main():
     while time.time() - warm_t0 < 3.0:
         cam.read()
     print("[INFO] Camera warm. Starting control loop.")
+
+    # Safe drive starts only after the camera is confirmed working. Camera
+    # setup failures above therefore cannot leave motor torque enabled.
+    if safe_leap is not None:
+        try:
+            safe_leap.start()
+            print("[INFO] LEAP Hand connected in low-force safety mode.")
+        except Exception as e:
+            print(f"[WARN] Cannot start safe drive: {e}")
+            safe_leap = None
 
     frame_count = 0
     show_diag = False
