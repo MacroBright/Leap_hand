@@ -3,6 +3,9 @@ import numpy as np
 from leap_hand_utils.dynamixel_client import *
 import leap_hand_utils.leap_hand_utils as lhu
 import time
+
+from gesture_mapping.safe_leap_controller import SafeLeapController
+from leap_hand_utils.safety_config import SAFE_PROFILE, SafetyProfile
 #######################################################
 """LEAP Hand 右手控制 (基于实测姿势)
 
@@ -99,7 +102,15 @@ if _os.path.exists(_POSES_FILE):
 
 
 class LeapNode:
-    def __init__(self, port=None, calib_mode=False):
+    def __init__(
+        self,
+        port=None,
+        calib_mode=False,
+        safe_mode=False,
+        profile: SafetyProfile = SAFE_PROFILE,
+        clock=time.monotonic,
+        sleep=time.sleep,
+    ):
         """初始化并连接 LEAP Hand.
 
         calib_mode=True 供 calibrate.py 使用: 全开位数据无效时仍允许连接
@@ -112,10 +123,18 @@ class LeapNode:
             print("          或删除 python/poses.json 恢复硬编码姿势。\n")
             raise SystemExit("[LEAP] 全开位校准数据无效, 不驱动电机。")
 
-        self.kP = 600
-        self.kI = 0
-        self.kD = 200
-        self.curr_lim = 350
+        self.safe_mode = bool(safe_mode)
+        self._safe_controller = None
+        if self.safe_mode:
+            self.kP = profile.kp
+            self.kI = profile.ki
+            self.kD = profile.kd
+            self.curr_lim = profile.goal_current
+        else:
+            self.kP = 600
+            self.kI = 0
+            self.kD = 200
+            self.curr_lim = 350
 
         self.motors = motors = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 
@@ -129,7 +148,18 @@ class LeapNode:
         for p in ports_to_try:
             try:
                 self.dxl_client = DynamixelClient(motors, p, 4000000)
-                self.dxl_client.connect()
+                if self.safe_mode:
+                    controller = SafeLeapController(
+                        self.dxl_client,
+                        OPEN_POSE,
+                        profile=profile,
+                        clock=clock,
+                        sleep=sleep,
+                    )
+                    controller.start()
+                    self._safe_controller = controller
+                else:
+                    self.dxl_client.connect()
                 print(f"[INFO] Connected on: {p}")
                 connected = True
                 break
@@ -138,6 +168,16 @@ class LeapNode:
 
         if not connected:
             raise OSError("Could not connect. Check power and USB.")
+
+        if self.safe_mode:
+            self.curr_pos = self._safe_controller.commanded_pose.copy()
+            self.prev_pos = self.curr_pos.copy()
+            print("[INFO] LEAP Hand initialized in safe mode!")
+            print(
+                f"[INFO] kP={self.kP}, kD={self.kD}, "
+                f"curr_lim={self.curr_lim}mA"
+            )
+            return
 
         # 初始化参数
         self.dxl_client.sync_write(motors, np.zeros(len(motors)), 9, 1)    # Return Delay = 0
@@ -163,8 +203,11 @@ class LeapNode:
     def set_leap(self, pose):
         """直接用 LEAP 角度控制 16 个电机"""
         self.prev_pos = self.curr_pos
-        self.curr_pos = np.array(pose)
-        self.dxl_client.write_desired_pos(self.motors, self.curr_pos)
+        if self.safe_mode:
+            self.curr_pos = self._safe_controller.track(pose)
+        else:
+            self.curr_pos = np.array(pose)
+            self.dxl_client.write_desired_pos(self.motors, self.curr_pos)
 
     def set_pose(self, name):
         """用录好的姿势名控制"""
@@ -215,7 +258,10 @@ class LeapNode:
         return self.dxl_client.read_pos_vel_cur()
 
     def disconnect(self):
-        self.dxl_client.disconnect()
+        if self.safe_mode:
+            self._safe_controller.shutdown()
+        else:
+            self.dxl_client.disconnect()
         print("[INFO] Disconnected.")
 
 
