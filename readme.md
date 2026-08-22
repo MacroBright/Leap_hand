@@ -98,6 +98,31 @@ the last target through tracking losses up to 0.5 seconds, and then gradually
 returns to open. Press `Q` or `Ctrl+C` to return open and disable torque. The
 legacy `--drive` option retains its original higher-force behavior.
 
+The same centralized safe mode is available to the core and interactive
+controllers:
+
+```bash
+cd python
+python main.py --safe-drive
+python interactive_control.py --safe-drive
+python gesture_mapping/demo_realtime.py --camera 0 --safe-drive
+```
+
+The dedicated demonstrations are always safe; `--safe-drive` is accepted as a
+consistent alias but is not required:
+
+```bash
+python safe_control.py --safe-drive
+python safe_middle_finger.py --safe-drive
+```
+
+All low-force values have one source of truth:
+[`python/leap_hand_utils/safety_config.py`](python/leap_hand_utils/safety_config.py).
+Change `SAFE_PROFILE` there to update every safe-mode consumer on its next
+start. Do not copy register gains or current limits into new scripts; construct
+`LeapNode(safe_mode=True)` instead. Software limits do not replace a cleared
+workspace and a reachable hardware power cutoff.
+
 **Vision teleoperation of an arm** (simulation first — run the MuJoCo arm in another terminal):
 
 ```bash
