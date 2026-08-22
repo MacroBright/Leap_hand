@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from gesture_mapping.safe_leap_controller import SafeLeapController
+from leap_hand_utils.safety_config import SafetyProfile
 
 
 class FakePort:
@@ -119,6 +120,21 @@ def test_startup_applies_validated_low_force_configuration():
         event[0:2] == ("sync", 102) and set(event[2]) == {150}
         for event in client.events
     )
+
+
+def test_startup_uses_the_injected_safety_profile():
+    profile = SafetyProfile(kp=210, kd=70, goal_current=90)
+    client = FakeClient()
+    controller = SafeLeapController(
+        client,
+        np.zeros(16),
+        profile=profile,
+        sleep=lambda _: None,
+    )
+    controller.start(interpolation_s=0.0)
+    assert ("sync", 84, tuple([210] * 16)) in client.events
+    assert ("sync", 80, tuple([70] * 16)) in client.events
+    assert ("sync", 102, tuple([90] * 16)) in client.events
 
 
 def test_shutdown_disables_torque_and_closes_port():

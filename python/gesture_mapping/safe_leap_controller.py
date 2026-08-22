@@ -5,6 +5,8 @@ from typing import Callable, Optional, Sequence
 
 import numpy as np
 
+from leap_hand_utils.safety_config import SAFE_PROFILE, SafetyProfile
+
 
 class SafeLeapController:
     """Own the safe motor lifecycle for visual teleoperation.
@@ -13,26 +15,31 @@ class SafeLeapController:
     """
 
     MOTOR_IDS = list(range(16))
-    KP = 300
-    KI = 0
-    KD = 100
-    GOAL_CURRENT = 150
-
     def __init__(
         self,
         client,
         open_pose: Sequence[float],
+        profile: SafetyProfile = SAFE_PROFILE,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
-        max_speed_rad_s: float = 1.0,
-        loss_timeout_s: float = 0.5,
+        max_speed_rad_s: Optional[float] = None,
+        loss_timeout_s: Optional[float] = None,
     ):
         self.client = client
         self.open_pose = self._validate_pose(open_pose, "open_pose")
+        self.profile = profile
         self.clock = clock
         self.sleep = sleep
-        self.max_speed_rad_s = float(max_speed_rad_s)
-        self.loss_timeout_s = float(loss_timeout_s)
+        self.max_speed_rad_s = float(
+            profile.max_speed_rad_s
+            if max_speed_rad_s is None
+            else max_speed_rad_s
+        )
+        self.loss_timeout_s = float(
+            profile.tracking_loss_seconds
+            if loss_timeout_s is None
+            else loss_timeout_s
+        )
         if self.max_speed_rad_s <= 0:
             raise ValueError("max_speed_rad_s must be positive")
         if self.loss_timeout_s < 0:
@@ -87,7 +94,9 @@ class SafeLeapController:
             self.sleep(delay)
         self.last_update_time = self.clock()
 
-    def start(self, interpolation_s=2.0):
+    def start(self, interpolation_s=None):
+        if interpolation_s is None:
+            interpolation_s = self.profile.startup_seconds
         try:
             self.client.connect()
             current = self._validate_pose(self.client.read_pos(), "current pose")
@@ -96,11 +105,20 @@ class SafeLeapController:
             self.client.set_torque_enabled(self.MOTOR_IDS, False)
             self.client.sync_write(self.MOTOR_IDS, np.zeros(16), 9, 1)
             self.client.sync_write(self.MOTOR_IDS, np.full(16, 5), 11, 1)
-            self.client.sync_write(self.MOTOR_IDS, np.full(16, self.KP), 84, 2)
-            self.client.sync_write(self.MOTOR_IDS, np.full(16, self.KI), 82, 2)
-            self.client.sync_write(self.MOTOR_IDS, np.full(16, self.KD), 80, 2)
             self.client.sync_write(
-                self.MOTOR_IDS, np.full(16, self.GOAL_CURRENT), 102, 2
+                self.MOTOR_IDS, np.full(16, self.profile.kp), 84, 2
+            )
+            self.client.sync_write(
+                self.MOTOR_IDS, np.full(16, self.profile.ki), 82, 2
+            )
+            self.client.sync_write(
+                self.MOTOR_IDS, np.full(16, self.profile.kd), 80, 2
+            )
+            self.client.sync_write(
+                self.MOTOR_IDS,
+                np.full(16, self.profile.goal_current),
+                102,
+                2,
             )
 
             # Prevent an enable-time jump by making the measured pose the goal.
@@ -134,9 +152,11 @@ class SafeLeapController:
             return self.commanded_pose.copy()
         return self._write_limited(self.open_pose, now)
 
-    def shutdown(self, return_open=True, interpolation_s=2.0):
+    def shutdown(self, return_open=True, interpolation_s=None):
         if self.closed:
             return
+        if interpolation_s is None:
+            interpolation_s = self.profile.shutdown_seconds
         try:
             if (
                 return_open
