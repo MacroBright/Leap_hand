@@ -11,6 +11,7 @@ LEAP Hand 右手交互式控制脚本 (基于实测姿势)
   拇指: ID 12(MCP前后) 13(MCP侧摆) 14(PIP) 15(DIP)   ← 拇指顺序与其他指不同
 """
 
+import argparse
 import numpy as np
 import sys
 import os
@@ -82,8 +83,8 @@ def print_help():
 
 
 class HandController:
-    def __init__(self):
-        self.leap = LeapNode()
+    def __init__(self, safe_mode=False):
+        self.leap = LeapNode(safe_mode=safe_mode)
         self.target = OPEN_POSE.copy()
 
     def set_joint_relative(self, finger: str, joint: str, angle: float):
@@ -134,9 +135,20 @@ class HandController:
         self.leap.disconnect()
 
 
-def main():
+def build_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--safe-drive",
+        action="store_true",
+        help="Drive with the centralized low-force safety profile",
+    )
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
     print("\n启动 LEAP Hand 控制器...")
-    ctrl = HandController()
+    ctrl = HandController(safe_mode=args.safe_drive)
     print("就绪！输入 'help' 查看命令，'quit' 退出。\n")
 
     try:

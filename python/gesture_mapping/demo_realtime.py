@@ -290,13 +290,14 @@ def main():
     safe_leap = None
     if args.safe_drive:
         from leap_hand_utils.dynamixel_client import DynamixelClient
+        from leap_hand_utils.safety_config import SAFE_PROFILE
         from main import OPEN_POSE
         from gesture_mapping.safe_leap_controller import SafeLeapController
 
         port = ("/dev/serial/by-id/"
                 "usb-FTDI_USB__-__Serial_Converter_FTB8HNYU-if00-port0")
         client = DynamixelClient(list(range(16)), port, 4000000)
-        safe_leap = SafeLeapController(client, OPEN_POSE)
+        safe_leap = SafeLeapController(client, OPEN_POSE, profile=SAFE_PROFILE)
     elif args.drive:
         from main import LeapNode, OPEN_POSE
         try:

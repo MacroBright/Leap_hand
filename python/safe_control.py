@@ -7,26 +7,35 @@ current pose first, enables torque with conservative gains, interpolates to
 the recorded half-grasp, then always disables torque before exiting.
 """
 
+import argparse
 import time
 
 import numpy as np
 
 from leap_hand_utils.dynamixel_client import DynamixelClient
+from leap_hand_utils.safety_config import SAFE_PROFILE
 from main import POSES
 
 
 PORT = "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTB8HNYU-if00-port0"
 MOTOR_IDS = list(range(16))
 BAUDRATE = 4_000_000
-KP = 300
-KI = 0
-KD = 100
-GOAL_CURRENT = 150
-DURATION_S = 2.0
 STEPS = 100
 
 
-def main():
+def build_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--safe-drive",
+        action="store_true",
+        default=True,
+        help="Accepted for consistency; this script is always in safe mode",
+    )
+    return parser
+
+
+def main(argv=None):
+    build_parser().parse_args(argv)
     client = DynamixelClient(MOTOR_IDS, PORT, BAUDRATE)
     client.connect()
     torque_enabled = False
@@ -39,10 +48,12 @@ def main():
         client.set_torque_enabled(MOTOR_IDS, False)
         client.sync_write(MOTOR_IDS, np.zeros(16), 9, 1)       # Return delay
         client.sync_write(MOTOR_IDS, np.full(16, 5), 11, 1)   # Operating mode
-        client.sync_write(MOTOR_IDS, np.full(16, KP), 84, 2)
-        client.sync_write(MOTOR_IDS, np.full(16, KI), 82, 2)
-        client.sync_write(MOTOR_IDS, np.full(16, KD), 80, 2)
-        client.sync_write(MOTOR_IDS, np.full(16, GOAL_CURRENT), 102, 2)
+        client.sync_write(MOTOR_IDS, np.full(16, SAFE_PROFILE.kp), 84, 2)
+        client.sync_write(MOTOR_IDS, np.full(16, SAFE_PROFILE.ki), 82, 2)
+        client.sync_write(MOTOR_IDS, np.full(16, SAFE_PROFILE.kd), 80, 2)
+        client.sync_write(
+            MOTOR_IDS, np.full(16, SAFE_PROFILE.goal_current), 102, 2
+        )
 
         # Hold the measured pose before torque is enabled to avoid a startup jump.
         client.write_desired_pos(MOTOR_IDS, start)
@@ -55,19 +66,19 @@ def main():
         print("Returning smoothly to open pose")
         for alpha in np.linspace(0.0, 1.0, STEPS + 1)[1:]:
             client.write_desired_pos(MOTOR_IDS, start + alpha * (open_pose - start))
-            time.sleep(DURATION_S / STEPS)
+            time.sleep(SAFE_PROFILE.startup_seconds / STEPS)
 
         time.sleep(0.5)
         print("Moving smoothly from open pose to half-grasp")
         for alpha in np.linspace(0.0, 1.0, STEPS + 1)[1:]:
             client.write_desired_pos(MOTOR_IDS, open_pose + alpha * (target - open_pose))
-            time.sleep(DURATION_S / STEPS)
+            time.sleep(SAFE_PROFILE.startup_seconds / STEPS)
 
         time.sleep(1.0)
         print("Low-force half-grasp completed; returning to open pose")
         for alpha in np.linspace(0.0, 1.0, STEPS + 1)[1:]:
             client.write_desired_pos(MOTOR_IDS, target + alpha * (open_pose - target))
-            time.sleep(DURATION_S / STEPS)
+            time.sleep(SAFE_PROFILE.shutdown_seconds / STEPS)
 
         time.sleep(0.5)
         print("Measured position:", client.read_pos())

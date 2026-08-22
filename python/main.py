@@ -1,3 +1,5 @@
+import argparse
+
 import numpy as np
 
 from leap_hand_utils.dynamixel_client import *
@@ -267,8 +269,18 @@ class LeapNode:
 
 # ─── 主函数 ───────────────────────────────────────────────────
 
-def main(**kwargs):
-    leap = LeapNode()
+def build_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--safe-drive",
+        action="store_true",
+        help="Drive with the centralized low-force safety profile",
+    )
+    return parser
+
+
+def main(safe_drive=False, **kwargs):
+    leap = LeapNode(safe_mode=safe_drive)
     try:
         while True:
             leap.set_open()
@@ -281,4 +293,5 @@ def main(**kwargs):
 
 
 if __name__ == "__main__":
-    main()
+    args = build_parser().parse_args()
+    main(safe_drive=args.safe_drive)
