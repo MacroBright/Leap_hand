@@ -1,6 +1,7 @@
 # ─── 本地开发工具产物 (不入库) ───
 test_env
 .vscode
+.worktrees/
 
 # Claude Code 临时配置与多窗口分工
 .claude/
