@@ -48,39 +48,60 @@ def backproject(u: float, v: float, depth_mm: float, K: K) -> np.ndarray:
 
 
 def median_depth_at(depth: np.ndarray, u: float, v: float,
-                    patch: int = 7) -> float:
-    """wrist 邻域中值深度(mm)。越界/全 0 返回 nan。"""
+                    patch: int = 7, max_patch: int = 21) -> float:
+    """wrist / keypoint 邻域多尺度中值深度(mm)。越界/全 0 返回 nan。"""
     h, w = depth.shape
-    r = patch // 2
-    u0, u1 = max(0, int(u) - r), min(w, int(u) + r + 1)
-    v0, v1 = max(0, int(v) - r), min(h, int(v) + r + 1)
-    patch_d = depth[v0:v1, u0:u1]
-    patch_d = patch_d[patch_d > 0]
-    if patch_d.size == 0:
-        return float("nan")
-    return float(np.median(patch_d))
+    for p in (patch, 15, max_patch):
+        r = p // 2
+        u0, u1 = max(0, int(u) - r), min(w, int(u) + r + 1)
+        v0, v1 = max(0, int(v) - r), min(h, int(v) + r + 1)
+        patch_d = depth[v0:v1, u0:u1]
+        patch_d = patch_d[patch_d > 0]
+        if patch_d.size > 0:
+            return float(np.median(patch_d))
+    return float("nan")
 
 
 def build_palm_pts(hand, depth: Optional[np.ndarray],
                    K: Optional[K]) -> Optional[np.ndarray]:
     """从 HandResult + 对齐深度反投影出所需关键点 (21,3) 相机系 mm。
 
-    任一所需关键点深度无效时返回 None。hand.landmarks 为归一化 Landmark
-    (x,y∈[0,1]), 用 depth.shape 换算像素。
+    具备单点阴影与边缘自适应补全功能：若部分关键点由于手掌翻转出现阴影，
+    基于手腕与掌心已知深度进行刚体平面推算补全，极大增强鲁棒性。
     """
     if depth is None or K is None:
         return None
     h, w = depth.shape
     lm = hand.landmarks
     pts = np.zeros((21, 3))
-    for i in (_WRIST, _MCP_INDEX, _MCP_MIDDLE, _MCP_MIDDLE_TIP, _MCP_PINKY):
+
+    valid_depths = []
+    points_uv = {}
+    points_z = {}
+    needed = (_WRIST, _MCP_INDEX, _MCP_MIDDLE, _MCP_MIDDLE_TIP, _MCP_PINKY)
+    for i in needed:
         u = lm[i].x * w
         v = lm[i].y * h
         if not (0 <= u < w and 0 <= v < h):
             return None
-        z = median_depth_at(depth, u, v)
-        if not math.isfinite(z):
-            return None
+        points_uv[i] = (u, v)
+        z = median_depth_at(depth, u, v, patch=7, max_patch=21)
+        points_z[i] = z
+        if math.isfinite(z) and z > 100.0:
+            valid_depths.append(z)
+
+    # 至少要有关键点拥有有效深度
+    if len(valid_depths) < 2:
+        return None
+
+    median_z = float(np.median(valid_depths))
+
+    for i in needed:
+        u, v = points_uv[i]
+        z = points_z[i]
+        # 阴影或空洞关键点，用掌面中值深度补全
+        if not math.isfinite(z) or z <= 100.0:
+            z = median_z
         pts[i] = backproject(u, v, z, K)
     return pts
 
