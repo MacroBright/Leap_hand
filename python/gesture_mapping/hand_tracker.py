@@ -85,9 +85,9 @@ class HandTracker:
         self,
         model_path: Optional[str] = None,
         max_num_hands: int = 2,
-        min_detection_confidence: float = 0.5,
-        min_presence_confidence: float = 0.5,
-        min_tracking_confidence: float = 0.5,
+        min_detection_confidence: float = 0.35,
+        min_presence_confidence: float = 0.30,
+        min_tracking_confidence: float = 0.30,
     ):
         model = model_path or str(_DEFAULT_MODEL)
         if not Path(model).exists():
