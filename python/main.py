@@ -99,7 +99,7 @@ if _os.path.exists(_POSES_FILE):
 
 
 class LeapNode:
-    def __init__(self, port=None, calib_mode=False):
+    def __init__(self, port=None, calib_mode=False, kP=300, kI=0, kD=100, curr_lim=150):
         """初始化并连接 LEAP Hand.
 
         calib_mode=True 供 calibrate.py 使用: 全开位数据无效时仍允许连接
@@ -112,10 +112,10 @@ class LeapNode:
             print("          或删除 python/poses.json 恢复硬编码姿势。\n")
             raise SystemExit("[LEAP] 全开位校准数据无效, 不驱动电机。")
 
-        self.kP = 600
-        self.kI = 0
-        self.kD = 200
-        self.curr_lim = 350
+        self.kP = kP
+        self.kI = kI
+        self.kD = kD
+        self.curr_lim = curr_lim
 
         self.motors = motors = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 
