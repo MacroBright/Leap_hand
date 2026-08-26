@@ -80,18 +80,16 @@ def build_palm_pts(hand, depth: Optional[np.ndarray],
     points_z = {}
     needed = (_WRIST, _MCP_INDEX, _MCP_MIDDLE, _MCP_MIDDLE_TIP, _MCP_PINKY)
     for i in needed:
-        u = lm[i].x * w
-        v = lm[i].y * h
-        if not (0 <= u < w and 0 <= v < h):
-            return None
+        u = float(np.clip(lm[i].x * w, 0.0, float(w - 1)))
+        v = float(np.clip(lm[i].y * h, 0.0, float(h - 1)))
         points_uv[i] = (u, v)
-        z = median_depth_at(depth, u, v, patch=7, max_patch=21)
+        z = median_depth_at(depth, u, v, patch=7, max_patch=25)
         points_z[i] = z
         if math.isfinite(z) and z > 100.0:
             valid_depths.append(z)
 
     # 至少要有关键点拥有有效深度
-    if len(valid_depths) < 2:
+    if len(valid_depths) < 1:
         return None
 
     median_z = float(np.median(valid_depths))
