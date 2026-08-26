@@ -41,16 +41,36 @@ class RealSenseSource(CameraSource):
     intrinsics are exposed via intrinsics().
     """
 
-    def __init__(self, width: int = 640, height: int = 480, fps: int = 30,
+    def __init__(self, width: int = 848, height: int = 480, fps: int = 60,
                  enable_depth: bool = True):
         import pyrealsense2 as rs
         self._rs = rs
         self._pipeline = rs.pipeline()
-        config = rs.config()
-        config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
-        if enable_depth:
-            config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
-        self._profile = self._pipeline.start(config)
+        
+        # 优先尝试 60fps 高帧率模式 (D455/D435 官方原生 848x480 @60fps / 640x480 @60fps)
+        started = False
+        candidates = [
+            (width, height, fps),
+            (848, 480, 60),
+            (640, 480, 60),
+            (640, 480, 30),
+        ]
+        for w_c, h_c, fps_c in candidates:
+            try:
+                config = rs.config()
+                config.enable_stream(rs.stream.color, w_c, h_c, rs.format.bgr8, fps_c)
+                if enable_depth:
+                    config.enable_stream(rs.stream.depth, w_c, h_c, rs.format.z16, fps_c)
+                self._profile = self._pipeline.start(config)
+                self._width, self._height, self._fps = w_c, h_c, fps_c
+                started = True
+                break
+            except Exception:
+                continue
+
+        if not started:
+            raise RuntimeError("Failed to start RealSense pipeline with any candidate stream profile")
+
         self._align = rs.align(rs.stream.color)
         self._intrinsics = None
         try:
@@ -59,7 +79,6 @@ class RealSenseSource(CameraSource):
             self._intrinsics = (intr.fx, intr.fy, intr.ppx, intr.ppy)
         except Exception:
             self._intrinsics = None
-        self._width, self._height = width, height
 
     def _next_aligned(self):
         frames = self._pipeline.wait_for_frames()
@@ -101,16 +120,8 @@ class RealSenseSource(CameraSource):
             pass
 
 
-def open_realsense(width: int = 640, height: int = 480, fps: int = 30) -> Optional[CameraSource]:
-    """Open the D455 color stream via the official SDK.
-
-    The D455 does not expose 640x480 BGR8 @60fps — requesting it makes
-    pipeline.start() throw "Couldn't resolve requests". Default to 30fps,
-    which is reliable; a faster BGR combo is not supported on this device.
-
-    Returns None if pyrealsense2 is not installed or no RealSense device
-    is present (caller should fall back to OpenCV).
-    """
+def open_realsense(width: int = 848, height: int = 480, fps: int = 60) -> Optional[CameraSource]:
+    """Open the RealSense color + depth stream (defaults to high-speed 60fps with automatic fallback)."""
     try:
         import pyrealsense2 as rs
     except ImportError:
