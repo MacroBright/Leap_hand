@@ -5,6 +5,8 @@ test_env
 # Claude Code 临时配置与多窗口分工
 .claude/
 CLAUDE.md
+camera_pref.json
+
 
 # Playwright MCP 运行时产物 (page-*.png / page-*.yml)
 .playwright-mcp/

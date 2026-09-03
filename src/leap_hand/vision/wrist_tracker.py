@@ -12,7 +12,11 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from gesture_mapping.filter import OneEuroFilter
+try:
+    from ..kinematics.filter import OneEuroFilter
+except (ImportError, ValueError):
+    from gesture_mapping.filter import OneEuroFilter
+
 
 
 def _apply_rotation(R: np.ndarray, pts) -> np.ndarray:

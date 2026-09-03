@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "leap-hand"
+version = "0.2.0"
+description = "16-DOF LEAP Hand perception, kinematics, control, and teleoperation subsystem"
+readme = "README.md"
+
+requires-python = ">=3.10"
+license = { text = "CC BY-NC 4.0" }
+authors = [
+    { name = "ForgeMind Robotics" }
+]
+dependencies = [
+    "numpy>=1.22.0",
+    "dynamixel-sdk>=3.7.31",
+    "pyserial>=3.5",
+]
+
+
+[project.optional-dependencies]
+realsense = ["pyrealsense2"]
+dev = [
+    "pytest>=7.0.0",
+    "ruff",
+]
+
+[project.scripts]
+leap-teleop = "leap_hand.cli.teleop:main"
+leap-teleop-3d = "leap_hand.cli.teleop_3d:main"
+leap-control = "leap_hand.cli.control:main"
+leap-calibrate = "leap_hand.cli.calibrate:main"
+leap-diagnose = "leap_hand.cli.diagnostics:main"
+leap-latency = "leap_hand.cli.latency:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"leap_hand" = ["configs/*.json", "vision/models/*.task", "py.typed"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
