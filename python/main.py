@@ -77,8 +77,10 @@ def _is_valid_pose(pose):
     # 读取失败回退特征: 全零 或 16 个值完全相同 (真实电机读数必然分散)
     if np.all(np.abs(pose) < 1e-6) or np.ptp(pose) < 1e-6:
         return False
-    # 真实手可动作范围 (实测约 -0.2 ~ 5.6 rad)
-    if pose.min() < -0.5 or pose.max() > 6.3:
+    # 真实手可动作范围: 依据实测 motor_limits.json 全局边界
+    #   max 最大值 = ID12(Thb MCP) 8.12, min 最小值 = ID3(Idx DIP) -0.28
+    #   (上限必须覆盖 ID12 限位 8.12; 否则比耶等拇指大动作姿势会被误判)
+    if pose.min() < -2.5 or pose.max() > 8.5:
         return False
     return True
 
@@ -97,7 +99,7 @@ if _os.path.exists(_POSES_FILE):
 
 
 class LeapNode:
-    def __init__(self, port=None, calib_mode=False):
+    def __init__(self, port=None, calib_mode=False, kP=300, kI=0, kD=100, curr_lim=150):
         """初始化并连接 LEAP Hand.
 
         calib_mode=True 供 calibrate.py 使用: 全开位数据无效时仍允许连接
@@ -110,10 +112,10 @@ class LeapNode:
             print("          或删除 python/poses.json 恢复硬编码姿势。\n")
             raise SystemExit("[LEAP] 全开位校准数据无效, 不驱动电机。")
 
-        self.kP = 600
-        self.kI = 0
-        self.kD = 200
-        self.curr_lim = 550
+        self.kP = kP
+        self.kI = kI
+        self.kD = kD
+        self.curr_lim = curr_lim
 
         self.motors = motors = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 

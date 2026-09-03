@@ -1,5 +1,54 @@
+# ─── 本地开发工具产物 (不入库) ───
 test_env
 .vscode
+
+# Claude Code 临时配置与多窗口分工
+.claude/
+CLAUDE.md
+camera_pref.json
+
+
+# Playwright MCP 运行时产物 (page-*.png / page-*.yml)
+.playwright-mcp/
+# 其它 IDE
+.idea/
+
+# ─── OS / 系统垃圾 ───
+.DS_Store
+Thumbs.db
+
+# ─── 凭据 ───
+.env
+*.token
+*.key
+
+# ─── 第三方 SDK 的构建产物 (dynamixel_sdk cpp 仓内自带) ───
+cpp/dynamixel_sdk/build/
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.dll
+*.lib
+*.exe
+*.so
+*.o
+*.a
+
+# ─── Python ───
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+
+# ─── 大文件 / 数据 / 日志 ───
+datasets/
+outputs/
+*.log
+MUJOCO_LOG.TXT
+.ipynb_checkpoints/
 # 改动前备份 (python/backups/)
 python/backups/
 # 迁移备份: 退役 venv / 依赖快照 (勿提交, 勿删)
@@ -158,9 +207,6 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
-
-# CoAgent orchestrator state
-.orchestrator/
 
 # 离线测试图像 (seeded hamer example_data + generated _compare overlays, 不入库)
 python/images/

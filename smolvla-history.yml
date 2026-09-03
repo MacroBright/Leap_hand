@@ -1,0 +1,6 @@
+name: smolvla
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+prefix: /home/bright/win_office/conda/envs/smolvla

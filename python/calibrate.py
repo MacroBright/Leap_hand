@@ -37,11 +37,41 @@ def save_poses(poses):
     print(f"\n✅ 已保存到: {OUTPUT_FILE}")
 
 
+def _unwrap_to_limits(pos):
+    """把读取到的 16 关节值对齐到实测限位圈 (消除编码器跨 0 点回绕).
+
+    锚点 = 每关节 motor_limits 中点: 读数若与锚点相差 > π, 平移 ±2π 归位.
+    (OPEN_POSE 本身可能跨圈, 不能作锚; 限位是实测物理边界, 才是稳定基准.)
+    返回副本, 不修改入参.
+    """
+    import json
+    from pathlib import Path
+    _lim_path = Path(__file__).resolve().parent / "gesture_mapping" / "motor_limits.json"
+    if _lim_path.exists():
+        with open(_lim_path) as f:
+            _lim = json.load(f)
+        mid = (np.array(_lim["min"], dtype=float) + np.array(_lim["max"], dtype=float)) / 2.0
+    else:
+        mid = np.array(pos, dtype=float)   # 无限位表 → 不调整
+    out = np.array(pos, dtype=float).copy()
+    for i in range(16):
+        diff = out[i] - mid[i]
+        while diff > np.pi:
+            out[i] -= 2.0 * np.pi
+            diff -= 2.0 * np.pi
+        while diff < -np.pi:
+            out[i] += 2.0 * np.pi
+            diff += 2.0 * np.pi
+    return out
+
+
 def read_pos_validated(leap, retries=6):
     """安全读取位置: 串口超时会导致 DynamixelClient 回退上一帧/全零数据,
     必须校验读数是否为真实值, 否则坏数据会被当成姿势入库."""
     for attempt in range(1, retries + 1):
         pos = np.array(leap.read_pos(), dtype=float)
+        # 编码器跨 0 点回绕 → 对齐到实测限位圈后再校验
+        pos = _unwrap_to_limits(pos)
         if _is_valid_pose(pos):
             return pos
         print(f"[重试 {attempt}/{retries}] 位置读数异常 (可能串口超时), 重新读取...")

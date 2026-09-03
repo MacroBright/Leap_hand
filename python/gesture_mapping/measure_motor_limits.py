@@ -56,8 +56,19 @@ def main():
     to_measure = args.motor if args.motor is not None else list(range(16))
     TAU = 2.0 * np.pi
 
+    out = args.out or str(Path(__file__).resolve().parent / "motor_limits.json")
+
+    # 增量安全: 从现有限位表加载已知值, 只更新 to_measure 电机
+    # (避免只测几个电机时把其余 13 个写成 0, 破坏整个限位表)
     limits_min = np.zeros(16, dtype=np.float64)
     limits_max = np.zeros(16, dtype=np.float64)
+    if Path(out).exists():
+        import json as _json
+        with open(out) as _f:
+            _prev = _json.load(_f)
+        limits_min = np.array(_prev["min"], dtype=np.float64)
+        limits_max = np.array(_prev["max"], dtype=np.float64)
+        print(f"[INFO] 载入现有限位表 ({out}); 本次仅更新电机 {to_measure}")
 
     try:
         # 转矩关闭 → 手指可手动活动
@@ -102,7 +113,6 @@ def main():
         except Exception as e:
             print(f"[WARN] 恢复转矩失败: {e}")
 
-    out = args.out or str(Path(__file__).resolve().parent / "motor_limits.json")
     data = {
         "min": [float(x) for x in limits_min],
         "max": [float(x) for x in limits_max],
