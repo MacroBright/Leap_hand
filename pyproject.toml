@@ -17,15 +17,24 @@ dependencies = [
     "numpy>=1.22.0",
     "dynamixel-sdk>=3.7.31",
     "pyserial>=3.5",
+    "opencv-contrib-python>=4.8.0",
+    "mediapipe>=0.10.0",
+    "pyrealsense2>=2.54.0",
 ]
 
-
 [project.optional-dependencies]
-realsense = ["pyrealsense2"]
 dev = [
     "pytest>=7.0.0",
     "ruff",
 ]
+gui = [
+    "PySide6>=6.5.0",
+    "PyOpenGL>=3.1.0",
+]
+all = [
+    "leap-hand[dev,gui]",
+]
+
 
 [project.scripts]
 leap-teleop = "leap_hand.cli.teleop:main"

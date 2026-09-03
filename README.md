@@ -1,81 +1,80 @@
 <div align="center">
 
-# 🖐️ LEAP Hand
+# LEAP Hand
 ### 16-DOF 灵巧手感知、控制与视觉遥操作子系统
 
-[![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg?style=flat-square)](https://www.python.org/)
-[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC_BY--NC_4.0-lightgrey.svg?style=flat-square)](https://creativecommons.org/licenses/by-nc/4.0/)
-[![Tests](https://img.shields.io/badge/tests-59%20passed%2C%203%20skipped-brightgreen.svg?style=flat-square)](tests/)
-[![Architecture](https://img.shields.io/badge/architecture-src--layout-orange.svg?style=flat-square)](src/leap_hand/)
-[![Baud Rate](https://img.shields.io/badge/Dynamixel-4Mbps%20Protocol%202.0-red.svg?style=flat-square)](https://emanual.robotis.com/)
-[![Ecosystem](https://img.shields.io/badge/ROS2-Humble%20Ready-blueviolet.svg?style=flat-square)](ros2_module/)
+[![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC_BY--NC_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
+[![Tests](https://img.shields.io/badge/Tests-59%20Passed-brightgreen.svg)](tests/)
+[![Dynamixel](https://img.shields.io/badge/Dynamixel-4Mbps%20Protocol%202.0-red.svg)](https://emanual.robotis.com/)
+[![ROS2](https://img.shields.io/badge/ROS2-Humble%20Ready-blueviolet.svg)](ros2_module/)
 
 <p align="center">
-  <b>高精 16 自由度智能总线控制 · RealSense / WebCam 实时手势遥操 · 一欧元自适应防抖滤波 · HaMeR 3D 网格重建</b>
+  <b>Leap_Hand</b> 是 TuinaDex 系统的 16 自由度右手灵巧手控制子模块，负责 Dynamixel 舵机总线驱动、视觉手势追踪解算、自适应零点标定、时域防抖滤波，以及键盘与手势实时遥操作。
 </p>
 
-[✨ 功能亮点](#-功能亮点) •
-[🏗️ 系统架构](#️-系统架构) •
-[🔌 硬件规格与接线](#-硬件规格与接线) •
-[⚡ 快速安装](#-快速安装) •
-[🚀 常用-cli-命令](#-常用-cli-命令) •
-[🐍-python-sdk-快速上手](#-python-sdk-快速上手) •
-[📁-工程目录结构](#-工程目录结构) •
-[📚-文档中心](#-文档中心)
+[主要特性](#主要特性) •
+[系统架构](#系统架构) •
+[硬件规格与接线](#硬件规格与接线) •
+[环境安装](#环境安装) •
+[命令行工具](#命令行工具-cli) •
+[常用运行示例](#常用运行示例) •
+[Python API](#python-api-示例) •
+[测试验证](#测试验证) •
+[相关文档](#相关文档)
 
 </div>
 
 ---
 
-## 📖 项目简介
+## 项目简介
 
-`Leap_Hand` 是专为机器人中医推拿、灵巧抓取及具身智能训练打造的 **16 自由度（16-DOF）右手灵巧手感知、控制与遥操作子系统**。本项目基于 [LEAP Hand (Shaw et al., RSS 2023)](https://github.com/leap-hand/LEAP_Hand_API) 开源架构深度定制，重构为符合现代工业级规范的独立 Python 工程。
+本项目基于 [LEAP Hand (Shaw et al., RSS 2023)](https://github.com/leap-hand/LEAP_Hand_API) 开源架构进行重构，针对中医推拿、灵巧抓取与具身示教场景进行模块化解耦，封装为标准的独立 Python 包。
 
-子系统集成了 **4Mbps 高速串口直连驱动**、**位置-电流限制安全保护**、**基于 RealSense D455 / WebCam 的 MediaPipe 21 点与 HaMeR 3D 视觉手势映射**、**一欧元自适应时域滤波** 以及 **开箱即用的命令行工具集（CLI）**。
-
----
-
-## ✨ 功能亮点
-
-- ⚡ **4Mbps 极速总线驱动**：基于 Dynamixel Protocol 2.0，利用 `GroupSyncRead` 与 `GroupSyncWrite` 在单个 USB 事务中同步读写 16 个舵机（通信时延 < 3ms）。
-- 🛡️ **双重安全防爆机制**：运行于**位置-电流限制模式**（默认限制 150~350mA），内嵌实测 `motor_limits.json` 硬限位防过行程保护，配合 $2\pi$ 跨圈自动解回绕算法杜绝舵机暴转。
-- 👁️ **低延迟视觉遥操作**：支持普通单目 WebCam 与 RealSense D455 深度流；通过向量夹角解算结合一欧元滤波器（$1€$ Filter），实现**静止时零抖动、快速移动时零相位滞后**。
-- 🖐️ **3D MANO 网格重建支持**：集成 HaMeR 深度学习模型，支持从单目图像直接回归真实 3D 手部网格，解决手部旋转/握拳时的深度退化难题。
-- 📦 **标准现代化工程架构**：采用标准的 `src/leap_hand` 包布局与 `pyproject.toml`，支持一键 `pip install -e .`，并注册 6 大独立终端命令。
-- 🔄 **零破坏向后兼容**：原 `python/` 路径提供轻量兼容垫片，保证上层协同项目（如 `Co_Teleop` 与机械臂工程）无缝直接复用。
+系统集成了 4Mbps 串口同步驱动、位置-电流限制模式、基于 RealSense D455 / WebCam 的 MediaPipe 21 点视觉手势映射、一欧元自适应时域滤波，以及开箱即用的命令行工具。
 
 ---
 
-## 🏗️ 系统架构
+## 主要特性
+
+- **4Mbps 串口同步通信**：基于 Dynamixel Protocol 2.0，使用 `GroupSyncRead` 与 `GroupSyncWrite` 批量同步读写 16 个舵机，单次通信延迟低于 3ms。
+- **电流限制与限位保护**：运行于位置-电流混合控制模式（默认限制电流 150~350mA），结合 `configs/motor_limits.json` 物理限位与 $2\pi$ 跨圈自动解回绕算法，防止舵机堵转过热与超程干涉。
+- **手势追踪与时域滤波**：支持普通 WebCam 与 RealSense D455 深度流；通过空间向量夹角计算关节弯曲度，配合一欧元滤波器（1€ Filter）抑制静止抖动并保持动态响应。
+- **姿态锁定与在线调谐**：支持一键平展手掌自适应校准零点，提供按键姿态死锁（Pose Lock）功能，支持在线微调 16 轴增益参数并持久化存储。
+- **标准模块化工程**：采用标准 `src/leap_hand` 布局与 `pyproject.toml`，提供一键命令行工具与 Python SDK，同时保留 `python/` 垫片保障向后兼容。
+
+---
+
+## 系统架构
 
 ```text
                ┌────────────────────────────────────────────────────────┐
                │         视觉感知层 (Vision & Gesture Perception)        │
                │  RealSense D455 / 单目 WebCam (RGB / 深度流)             │
                │    ├── MediaPipe Hands (21 关节点)                      │
-               │    └── HaMeR 3D (MANO 真实三维网格回归)                  │
+               │    └── HaMeR 3D (MANO 三维网格回归)                      │
                └───────────────────────────┬────────────────────────────┘
                                            │ (3D 关节点 / 掌骨姿态)
                                            ▼
                ┌────────────────────────────────────────────────────────┐
                │         运动学与映射层 (Kinematics & Mapping)           │
-               │    ├── calibrator.py   (人手平摊自适应零点标定)            │
+               │    ├── calibrator.py   (人手平展自适应零点标定)            │
                │    ├── joint_mapper.py (空间几何向量夹角解算)             │
                │    ├── filter.py       (1€ Filter 自适应时域防抖滤波)     │
-               │    └── leap_fk.py      (16-DOF 正向运动学与指尖末端解算)  │
+               │    └── leap_fk.py      (16-DOF 正向运动学与指尖解算)      │
                └───────────────────────────┬────────────────────────────┘
                                            │ (平滑后的 16 舵机目标弧度)
                                            ▼
                ┌────────────────────────────────────────────────────────┐
-               │         控制器与安全防爆层 (Controller & Safety)         │
-               │    ├── LeapNode        (位置-电流混合 PID 调度 Hub)      │
+               │         控制器与安全保护层 (Controller & Safety)         │
+               │    ├── LeapNode        (位置-电流混合控制 Hub)            │
                │    ├── pose_manager.py (姿态库加载与 2π 跨圈自动解回绕)   │
-               │    └── motor_limits    (16 舵机机械物理限位强制裁剪)      │
+               │    └── motor_limits    (16 舵机物理限位强制裁剪)          │
                └───────────────────────────┬────────────────────────────┘
-                                           │ (安全协议帧)
+                                           │ (协议帧)
                                            ▼
                ┌────────────────────────────────────────────────────────┐
-               │         硬件驱动层 (Hardware Driver)                    │
+               │         底层硬件驱动层 (Hardware Driver)                │
                │  DynamixelClient (Protocol 2.0 @ 4,000,000 bps)        │
                │    └── USB-TTL (/dev/ttyUSB0) ──▶ 16 × XC330-M288 舵机  │
                └────────────────────────────────────────────────────────┘
@@ -83,165 +82,152 @@
 
 ---
 
-## 🔌 硬件规格与接线
+## 硬件规格与接线
 
-| 项 | 规格说明 |
+| 项目 | 规格说明 |
 | :--- | :--- |
 | **执行器** | 16 × Dynamixel XC330-M288 智能总线舵机 |
-| **供电** | 12V DC 稳压电源（建议 12V 5A） |
-| **通信接口** | USB-TTL 适配板（`/dev/ttyUSB0`），波特率 **4,000,000 bps (4 Mbps)** |
-| **关节构型** | 食指 (0-3)、中指 (4-7)、无名指/小指 (8-11)、拇指 (12-15) |
+| **供电** | 12V DC 稳压电源（推荐 12V 5A） |
+| **通信接口** | USB-TTL 适配器（`/dev/ttyUSB0`），波特率 **4,000,000 bps (4 Mbps)** |
+| **手指拓扑** | 食指 (ID 0-3)、中指 (ID 4-7)、无名指/小指 (ID 8-11)、拇指 (ID 12-15) |
 
-> [!IMPORTANT]
-> ### ⚠ 拇指线序特殊反向说明（硬件关键）
-> 四指（食指/中指/无名指）采用：`ID x = MCP 侧摆, ID x+1 = MCP 弯曲`；  
-> **拇指采用反向线序**：`ID 12 = MCP 弯曲, ID 13 = MCP 侧摆`！  
-> 且拇指 ID 12 弯曲符号为正值弯向手心（其余指为负值）。本项目的 `JointMapper` 与控制器内部已完成自动解耦，软件调用时无需额外处理。
-
-详细舵机 ID 表与接线请参阅 👉 **[硬件配置与接线指南](docs/guides/hardware_setup.md)**。
+> **拇指线序说明**：  
+> 食指、中指、无名指采用 `ID x = MCP 侧摆, ID x+1 = MCP 弯曲`；  
+> **拇指采用反向线序**：`ID 12 = MCP 弯曲, ID 13 = MCP 侧摆`，且 ID 12 弯曲角度为正值（其他手指弯曲为负值）。本项目的 `JointMapper` 内部已完成解耦，调用时无需额外换算。
 
 ---
 
-## ⚡ 快速安装
+## 环境安装
 
-### 1. 配置 Conda 环境与依赖
-推荐在独立环境 `leap_hand` 中运行：
+### 1. 创建独立环境并安装
+
+推荐使用 Python 3.10 环境：
+
 ```bash
-# 激活环境
+# 方式 A：Conda 一键创建与安装 (推荐)
+cd Leap_Hand
+conda env create -f environment.yml
 conda activate leap_hand
 
-# 可编辑模式安装本包
-pip install -e . --no-deps --no-build-isolation
+# 方式 B：手动创建与 pip 安装
+conda create -n leap_hand python=3.10 -y
+conda activate leap_hand
+cd Leap_Hand
+pip install -r requirements.txt
+pip install -e .
 ```
 
 ### 2. 配置串口访问权限
+
 ```bash
 sudo chmod 666 /dev/ttyUSB0
-# 或添加用户组: sudo usermod -aG dialout $USER (注销重登生效)
+# 或将当前用户加入串口组 (注销重登后生效):
+sudo usermod -aG dialout $USER
 ```
 
 ---
 
-## 🚀 常用 CLI 命令
+## 命令行工具 (CLI)
 
-重构后，系统注册了 6 个全局开箱即用的终端命令：
+安装后系统将注册以下全局命令行工具：
 
-| 终端命令 | 核心功能 | 典型运行方式 |
+| 命令 | 功能说明 | 常用运行示例 |
 | :--- | :--- | :--- |
-| **`leap-teleop`** | ★ **单目/深度手势实时视觉遥操** | `leap-teleop --drive` |
-| **`leap-teleop-3d`** | 3D MANO / 多源高精度手势遥操 | `leap-teleop-3d --drive` |
-| **`leap-control`** | 逐指/逐关节/手势交互控制终端 | `leap-control --port /dev/ttyUSB0` |
-| **`leap-calibrate`** | 硬件零点校准与推拿手法姿势录制 | `leap-calibrate --action 1` |
-| **`leap-diagnose`** | 16 舵机物理限位测量与标定设置 | `leap-diagnose` |
-| **`leap-latency`** | 视觉遥操跟手端到端时延测量评估 | `leap-latency` |
+| **`leap-teleop`** | **实时手势视觉遥操主程序** | `leap-teleop --drive`<br/>*(空跑测试: `leap-teleop`)* |
+| **`leap-teleop-3d`** | 3D 手势遥操与网格追踪模式 | `leap-teleop-3d --drive` |
+| **`leap-control`** | 逐指/逐关节控制与姿态测试终端 | `leap-control --port /dev/ttyUSB0` |
+| **`leap-calibrate`** | 硬件零点校准与推拿手法姿态录制 | `leap-calibrate --action 1` |
+| **`leap-diagnose`** | 16 舵机物理限位检测与状态诊断 | `leap-diagnose` |
+| **`leap-latency`** | 端到端遥操跟手通信时延评估 | `leap-latency` |
 
 ### 键盘交互快捷键（`leap-teleop` 窗口内）
-- `空格 (SPACE)`：★ **一键自适应零点标定 & 硬件延迟上电**（右手平展对准镜头按空格，完成标定并开始跟手）；
-- `L`：★ **姿态锁定 / 解锁（Pose Lock）**（按 L 立即锁定灵巧手当前姿态并死锁保持，再次按 L 解锁恢复实时手势遥操）；
-- `D`：切换诊断 HUD 覆盖层（查看 16 舵机目标转角与弯曲判定）；
-- `Tab`：轮转切换选定舵机；
-- `[` / `]`：实时微调选定舵机的跟踪增益（Gain $\pm 0.05$）；
-- `S`：一键保存增益参数到 `configs/joint_gain.json`；
-- `Q` / `ESC`：平滑复位全开位并安全退出。
-
+- **`空格 (SPACE)`**：一键自适应零点标定并使能上电（右手平展对准镜头按下空格，完成基准捕捉并开始跟手）；
+- **`L`**：当前姿态锁定 / 解锁（Pose Lock，锁定后灵巧手保持当前抓握姿势不变，再次按 L 恢复跟随）；
+- **`D`**：开启 / 关闭 HUD 状态覆盖层（显示 16 舵机目标转角与弯曲判定）；
+- **`Tab`**：轮转选择特定舵机；
+- **`[` / `]`**：微调选定舵机的跟踪增益（Gain $\pm 0.05$）；
+- **`S`**：保存调整后的增益参数至 `configs/joint_gain.json`；
+- **`Q` / `ESC`**：平稳复位回全开位并安全退出。
 
 ---
 
-## 🐍 Python SDK 快速上手
+## 常用运行示例
+
+### 1. 纯视觉手势空跑（无需连接真实灵巧手）
+```bash
+leap-teleop
+```
+
+### 2. 真手连接并开始实时视觉遥操
+```bash
+leap-teleop --drive --port /dev/ttyUSB0
+```
+1. 启动后右手平展面向相机；
+2. 按键盘 **`空格键`**，系统自动捕获手掌参考系并启动舵机跟随；
+3. 需要保持抓握姿势时按 **`L`** 键锁定姿态。
+
+### 3. 命令行交互调试终端
+```bash
+leap-control --port /dev/ttyUSB0
+```
+
+---
+
+## Python API 示例
 
 ```python
-from leap_hand import LeapHand, OPEN_POSE
 import time
+from leap_hand import LeapHand
 
-# 1. 连接机械手 (默认电流上限 150mA，自动防堵转)
+# 1. 连接机械手 (默认限制电流 150mA，防止堵转过载)
 hand = LeapHand(port="/dev/ttyUSB0", curr_lim=150)
 
-# 2. 读取当前 16 关节位置 (rad)
+# 2. 读取当前 16 关节实际位置 (rad)
 print("当前关节位置:", hand.read_pos())
 
-# 3. 执行预设姿势 (从 configs/poses.json 加载)
+# 3. 执行预设姿势 (从 configs/poses.json 读取)
 hand.set_pose("全握拳")
 time.sleep(1.5)
 
-# 4. 单独微调食指近端指间关节 (相对全开位弯曲 0.5 rad)
+# 4. 单独控制指定舵机 (例如食指近端关节转动 0.5 rad)
 hand.set_joint(motor_id=2, relative_angle=0.5)
 time.sleep(1.0)
 
-# 5. 复位回标定的全开位并断开
+# 5. 复位回初始全开位并断开连接
 hand.set_open()
 hand.disconnect()
 ```
 
-更多 Python 接口详情请参阅 👉 **[Python SDK API 参考](docs/api/python_sdk.md)**。
-
 ---
 
-## 📁 工程目录结构
+## 测试验证
 
-```text
-Leap_Hand/
-├── pyproject.toml                         # ★ PEP 517/621 标准打包与脚本入口配置
-├── README.md                              # ★ GitHub 项目主文档
-├── configs/                               # ★ 集中化标定与参数数据库
-│   ├── poses.json                         # 姿态库 (全开/半握/握拳/揉法等)
-│   ├── motor_limits.json                  # 16 舵机实测物理安全限位
-│   └── joint_gain_3d.json                 # 3D 关节增益曲线配置
-│
-├── src/                                   # ★ 核心源码目录 (src-layout)
-│   └── leap_hand/                         # 独立 Python 包
-│       ├── __init__.py                    # 顶层干净导出
-│       ├── py.typed                       # 类型提示支持
-│       ├── driver/                        # [底层通信驱动] (DynamixelClient)
-│       ├── kinematics/                    # [纯运动学与滤波] (FK, limits, 1€ Filter)
-│       ├── controller/                    # [高层控制与姿态] (LeapNode, pose_manager)
-│       ├── vision/                        # [视觉手势感知] (MediaPipe, HaMeR, Mapper)
-│       └── cli/                           # [命令行工具入口集] (teleop, calibrate 等)
-│
-├── tests/                                 # ★ 自动化单元测试套件 (62 项测试全部通过)
-│   ├── conftest.py                        # pytest 环境配置
-│   ├── test_standard_package.py           # 包架构与 API 规范回归测试
-│   ├── test_calibrator.py                 # 自适应零点标定测试
-│   ├── test_joint_mapper.py               # 关节几何映射测试
-│   ├── test_leap_fk.py                    # 正运动学几何闭环测试
-│   └── ...                                # 滤波、相机、手腕解耦等专项测试
-│
-├── python/                                # 兼容保留层 (保障外部旧路径调用不中断)
-├── ros_module/                            # ROS1 Noetic 驱动包
-├── ros2_module/                           # ROS2 Humble 驱动包
-├── cpp/                                   # C++ 原生 SDK 与驱动例程
-├── CAD/                                   # 机械硬件 3D 图纸资产 (STL/STEP/URDF)
-└── docs/                                  # 设计文档、接线指南与开发手册
-```
-
----
-
-## 🧪 自动化测试验证
-
-全套自动化测试套件位于 [tests/](tests/) 目录，覆盖了正向运动学、几何解算、拇指接线反转补偿、滤波平滑以及包结构导出规范。
+项目包含 62 个自动化测试，覆盖正运动学、几何解算、拇指反向补偿、滤波算法与接口规范：
 
 ```bash
-# 运行全套测试套件
 pytest tests/
-
-# 预期输出: 59 passed, 3 skipped in 1.15s (跳过的 3 项为无 GPU/无相机的纯离线测试)
 ```
 
----
-
-## 📚 文档中心
-
-详细的技术手册与开发参考请查阅 **[docs/README.md](docs/README.md)**：
-- 🔌 **[硬件配置与接线指南](docs/guides/hardware_setup.md)**
-- 👁️ **[视觉手势遥操完全指南](docs/guides/teleop_guide.md)**
-- 🎯 **[姿态标定与姿态数据库指南](docs/guides/calibration_and_poses.md)**
-- 🐍 **[Python SDK API 参考](docs/api/python_sdk.md)**
-- 🔍 **[遥操跟手问题调研与设计报告](docs/design/2026-08-10-teleop-following-investigation.md)**
+```text
+======================== 59 passed, 3 skipped in ~1.3s =========================
+```
+*(跳过的 3 项为需要实际物理相机连接的测试用例)*
 
 ---
 
-## 🤝 引用与致谢
+## 相关文档
 
-LEAP Hand 硬件设计与初始控制架构源自卡内基梅隆大学（CMU）的开源成果：
+- [硬件配置与接线指南 (docs/guides/hardware_setup.md)](docs/guides/hardware_setup.md)
+- [手势视觉遥操使用指南 (docs/guides/teleop_guide.md)](docs/guides/teleop_guide.md)
+- [姿态标定与数据库说明 (docs/guides/calibration_and_poses.md)](docs/guides/calibration_and_poses.md)
+- [Python SDK API 参考 (docs/api/python_sdk.md)](docs/api/python_sdk.md)
+- [跟手时延优化报告 (docs/design/2026-08-10-teleop-following-investigation.md)](docs/design/2026-08-10-teleop-following-investigation.md)
+
+---
+
+## 引用与致谢
+
+LEAP Hand 硬件设计源自卡内基梅隆大学（CMU）开源研究成果：
 
 ```bibtex
 @inproceedings{shaw2023leaphand,
@@ -254,6 +240,6 @@ LEAP Hand 硬件设计与初始控制架构源自卡内基梅隆大学（CMU）�
 
 ---
 
-<div align="center">
-  <sub>Developed with ❤️ by ForgeMind Robotics Team</sub>
-</div>
+## 开源协议
+
+本项目遵循 [Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)](LICENSE) 协议。

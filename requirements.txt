@@ -1,0 +1,14 @@
+# LEAP Hand 核心依赖清单
+
+# 舵机驱动与串口通讯
+dynamixel-sdk>=3.7.31
+pyserial>=3.5
+numpy>=1.22.0
+
+# 视觉手势跟踪与 RealSense 相机
+opencv-contrib-python>=4.8.0
+mediapipe>=0.10.0
+pyrealsense2>=2.54.0
+
+# 测试与代码质量
+pytest>=7.0.0
