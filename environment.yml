@@ -1,4 +1,4 @@
-name: leap_hand
+name: tuinadex-control
 channels:
   - conda-forge
   - defaults

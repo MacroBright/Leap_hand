@@ -22,6 +22,7 @@ except (ImportError, ValueError):
     from main import LeapNode, POSES, OPEN_POSE
 
 import time
+from typing import Optional
 
 FINGER_NAMES = ["食指(Index)", "中指(Middle)", "无名指(Ring)", "拇指(Thumb)"]
 JOINT_NAMES = ["MCP侧摆", "MCP前后", "PIP", "DIP"]        # 食指/中指/无名指
